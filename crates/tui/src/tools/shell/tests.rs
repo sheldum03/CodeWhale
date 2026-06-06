@@ -132,6 +132,23 @@ fn failed_network_shell_result(stdout: &str, stderr: &str) -> ShellResult {
     }
 }
 
+#[test]
+fn tail_text_respects_cjk_display_width() {
+    let tail = tail_text(&"命令输出".repeat(20), 21);
+
+    assert!(unicode_width::UnicodeWidthStr::width(tail.as_str()) <= 21);
+    assert!(tail.starts_with("..."));
+    assert!(tail.chars().count() < 21);
+}
+
+#[test]
+fn tail_text_respects_tiny_display_width() {
+    for width in 0..=3 {
+        let tail = tail_text("命令输出", width);
+        assert_eq!(unicode_width::UnicodeWidthStr::width(tail.as_str()), width);
+    }
+}
+
 fn wait_for_completed_shell(manager: &mut ShellManager, task_id: &str) -> ShellResult {
     let deadline = Instant::now() + Duration::from_secs(20);
 

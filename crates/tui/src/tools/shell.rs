@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use uuid::Uuid;
 use wait_timeout::ChildExt;
 
@@ -1676,14 +1677,14 @@ fn take_delta_from_buffer(buffer: &Arc<Mutex<Vec<u8>>>, cursor: &mut usize) -> (
 /// Read only the tail of a byte buffer and return (total_len, tail_string).
 ///
 /// Avoids cloning the full buffer when only a trailing excerpt is needed
-/// (e.g. for the job-panel display).  `max_tail_chars` is in Unicode scalar
-/// values; we read at most `max_tail_chars * 4` bytes from the end to account
-/// for multi-byte UTF-8 sequences.
-fn tail_from_buffer(buffer: &Arc<Mutex<Vec<u8>>>, max_tail_chars: usize) -> (usize, String) {
+/// (e.g. for the job-panel display). `max_tail_width` is in terminal display
+/// columns; we read at most `max_tail_width * 4` bytes from the end to account
+/// for multi-byte UTF-8 sequences before applying display-width truncation.
+fn tail_from_buffer(buffer: &Arc<Mutex<Vec<u8>>>, max_tail_width: usize) -> (usize, String) {
     let guard = buffer.lock().unwrap_or_else(|e| e.into_inner());
     let total = guard.len();
     // Over-estimate byte count (4 bytes per char worst case for UTF-8).
-    let mut tail_start = total.saturating_sub(max_tail_chars.saturating_mul(4));
+    let mut tail_start = total.saturating_sub(max_tail_width.saturating_mul(4));
     // Snap forward to the next valid UTF-8 codepoint boundary so we don't
     // pass a slice beginning with continuation bytes (0x80–0xBF) to
     // from_utf8_lossy, which would emit a leading U+FFFD replacement char.
@@ -1691,22 +1692,36 @@ fn tail_from_buffer(buffer: &Arc<Mutex<Vec<u8>>>, max_tail_chars: usize) -> (usi
         tail_start += 1;
     }
     let tail_str = String::from_utf8_lossy(&guard[tail_start..]).into_owned();
-    (total, tail_text(&tail_str, max_tail_chars))
+    (total, tail_text(&tail_str, max_tail_width))
 }
 
-fn tail_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
+fn tail_text(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
         return text.to_string();
     }
-    let tail = text
-        .chars()
-        .rev()
-        .take(max_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
+
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width <= ellipsis_width {
+        return ".".repeat(max_width);
+    }
+    let tail_width = max_width.saturating_sub(ellipsis_width);
+    let tail = take_tail_display_width(text, tail_width);
     format!("...{tail}")
+}
+
+fn take_tail_display_width(text: &str, max_width: usize) -> String {
+    let mut chars = Vec::new();
+    let mut width = 0usize;
+    for ch in text.chars().rev() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        chars.push(ch);
+        width += ch_width;
+    }
+    chars.into_iter().rev().collect()
 }
 
 fn job_status_rank(status: &ShellStatus, stale: bool) -> u8 {
