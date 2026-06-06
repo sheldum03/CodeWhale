@@ -319,7 +319,10 @@ impl ModalView for ThemePickerView {
             spans.push(Span::raw("  "));
             spans.push(Span::styled(id.tagline(), tagline_style));
 
-            lines.push(Line::from(spans));
+            lines.push(Line::from(truncate_spans_to_width(
+                spans,
+                usize::from(inner.width),
+            )));
         }
 
         Paragraph::new(lines).render(inner, buf);
@@ -445,6 +448,31 @@ fn pad_display_width(text: &str, width: usize) -> String {
     let out_width = UnicodeWidthStr::width(out.as_str());
     if out_width < width {
         out.push_str(&" ".repeat(width - out_width));
+    }
+    out
+}
+
+fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'static>> {
+    if max_width == 0 {
+        return Vec::new();
+    }
+
+    let mut remaining = max_width;
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        let content = span.content.as_ref();
+        let content_width = UnicodeWidthStr::width(content);
+        if content_width <= remaining {
+            remaining = remaining.saturating_sub(content_width);
+            out.push(span);
+            continue;
+        }
+
+        let clipped = ascii_prefix(content, remaining);
+        if !clipped.is_empty() {
+            out.push(Span::styled(clipped, span.style));
+        }
+        break;
     }
     out
 }
@@ -733,6 +761,28 @@ mod tests {
         assert!(
             padded.starts_with("\u{4e3b}\u{9898}\u{9009}\u{62e9}"),
             "padded theme name should preserve visible text: {padded:?}"
+        );
+    }
+
+    #[test]
+    fn theme_row_spans_truncate_to_display_width() {
+        let spans = vec![
+            Span::raw(" > "),
+            Span::raw("1. "),
+            Span::raw(pad_display_width("DeepSeek Shell", 22)),
+            Span::raw("  "),
+            Span::raw("主题说明".repeat(8)),
+        ];
+        let spans = truncate_spans_to_width(spans, 32);
+        let plain = spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 32);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "theme row must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
