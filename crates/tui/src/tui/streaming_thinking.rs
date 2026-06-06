@@ -70,11 +70,19 @@ pub(super) fn translation_placeholder_frame(app: &App) -> String {
         .or(app.turn_started_at)
         .map(|started| started.elapsed().as_secs_f32())
         .unwrap_or_default();
-    let frame = match (elapsed.mul_add(2.0, 0.0) as usize) % 4 {
-        0 => "|",
-        1 => "/",
-        2 => "-",
-        _ => "\\",
+    translation_placeholder_text(&base, elapsed, app.low_motion)
+}
+
+fn translation_placeholder_text(base: &str, elapsed: f32, low_motion: bool) -> String {
+    let frame = if low_motion {
+        "-"
+    } else {
+        match (elapsed.mul_add(2.0, 0.0) as usize) % 4 {
+            0 => "|",
+            1 => "/",
+            2 => "-",
+            _ => "\\",
+        }
     };
     format!("{base} ({elapsed:.1}s {frame})")
 }
@@ -239,4 +247,45 @@ pub(super) fn finalize_active_entry(app: &mut App, duration: Option<f32>, remain
     }
     app.bump_active_cell_revision();
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translation_placeholder_text;
+
+    #[test]
+    fn translation_placeholder_animates_when_motion_enabled() {
+        assert_eq!(
+            translation_placeholder_text("Thinking", 0.0, false),
+            "Thinking (0.0s |)"
+        );
+        assert_eq!(
+            translation_placeholder_text("Thinking", 0.6, false),
+            "Thinking (0.6s /)"
+        );
+        assert_eq!(
+            translation_placeholder_text("Thinking", 1.1, false),
+            "Thinking (1.1s -)"
+        );
+        assert_eq!(
+            translation_placeholder_text("Thinking", 1.6, false),
+            "Thinking (1.6s \\)"
+        );
+    }
+
+    #[test]
+    fn low_motion_translation_placeholder_keeps_status_text_without_spinner() {
+        assert_eq!(
+            translation_placeholder_text("Thinking", 0.0, true),
+            "Thinking (0.0s -)"
+        );
+        assert_eq!(
+            translation_placeholder_text("Thinking", 0.6, true),
+            "Thinking (0.6s -)"
+        );
+        assert_eq!(
+            translation_placeholder_text("Thinking", 1.6, true),
+            "Thinking (1.6s -)"
+        );
+    }
 }
