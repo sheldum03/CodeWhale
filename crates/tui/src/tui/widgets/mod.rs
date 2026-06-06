@@ -1644,6 +1644,28 @@ fn elevation_indented_text(text: &str, indent: &str, max_width: usize) -> String
     truncate_display_width(text, max_width.saturating_sub(UnicodeWidthStr::width(indent)))
 }
 
+fn elevation_option_label_line(
+    key: &str,
+    label: &str,
+    key_style: Style,
+    label_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let prefix = "  ";
+    let key_label = format!("[{key}] ");
+    let used_width =
+        UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(key_label.as_str());
+
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(key_label, key_style),
+        Span::styled(
+            truncate_display_width(label, max_width.saturating_sub(used_width)),
+            label_style,
+        ),
+    ])
+}
+
 fn label_type(locale: Locale) -> &'static str {
     match locale {
         Locale::ZhHans => "类型：",
@@ -1813,11 +1835,12 @@ impl Renderable for ElevationWidget<'_> {
 
         // Show command if it's a shell command
         if let Some(ref command) = self.request.command {
-            let cmd_display = truncate_display_width(command, 45);
-            lines.push(Line::from(vec![
-                Span::raw("  Cmd:  "),
-                Span::styled(cmd_display, Style::default().fg(self.ui_theme.text_muted)),
-            ]));
+            lines.push(elevation_labeled_line(
+                "  Cmd:  ",
+                command,
+                Style::default().fg(self.ui_theme.text_muted),
+                content_width,
+            ));
         }
 
         lines.push(Line::from(""));
@@ -1899,14 +1922,13 @@ impl Renderable for ElevationWidget<'_> {
                 _ => self.ui_theme.text_body,
             };
 
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("[{key}] "),
-                    Style::default().fg(self.ui_theme.success),
-                ),
-                Span::styled(option.label(), style.fg(label_color)),
-            ]));
+            lines.push(elevation_option_label_line(
+                key,
+                option.label(),
+                Style::default().fg(self.ui_theme.success),
+                style.fg(label_color),
+                content_width,
+            ));
             lines.push(Line::from(vec![
                 Span::raw("      "),
                 Span::styled(
@@ -3734,6 +3756,28 @@ mod tests {
         assert!(
             text.is_char_boundary(text.len()),
             "elevation indented text must not split UTF-8 codepoints: {text:?}"
+        );
+    }
+
+    #[test]
+    fn elevation_option_label_line_truncates_to_display_width() {
+        let line = elevation_option_label_line(
+            "w",
+            &"\u{5199}\u{5165}\u{6743}\u{9650}".repeat(12),
+            Style::default(),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "elevation option label must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
