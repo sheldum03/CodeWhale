@@ -1419,23 +1419,14 @@ impl Renderable for ApprovalWidget<'_> {
         // Footer: Enter commits the highlighted row; y/a/d remain direct
         // shortcuts for users who do not want to move the selection.
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                selection_hint_prefix(locale),
-                Style::default().fg(self.ui_theme.text_hint),
-            ),
-            Span::styled(
-                selection_hint_value(locale),
-                Style::default()
-                    .fg(palette_colors.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                footer_controls(locale),
-                Style::default().fg(self.ui_theme.text_hint),
-            ),
-        ]));
+        lines.push(approval_footer_hint_line(
+            locale,
+            Style::default().fg(self.ui_theme.text_hint),
+            Style::default()
+                .fg(palette_colors.accent)
+                .add_modifier(Modifier::BOLD),
+            approval_content_width,
+        ));
 
         let title = approval_card_title(
             risk,
@@ -1689,6 +1680,32 @@ fn approval_option_line(
         Span::styled(
             truncate_display_width(label, max_width.saturating_sub(used_width)),
             label_style,
+        ),
+    ])
+}
+
+fn approval_footer_hint_line(
+    locale: Locale,
+    hint_style: Style,
+    value_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let prefix = "  ";
+    let selection_prefix = selection_hint_prefix(locale);
+    let selection_value = selection_hint_value(locale);
+    let controls = footer_controls(locale);
+    let fixed_width =
+        UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(selection_prefix);
+    let value = truncate_display_width(selection_value, max_width.saturating_sub(fixed_width));
+    let used_width = fixed_width + UnicodeWidthStr::width(value.as_str());
+
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(selection_prefix, hint_style),
+        Span::styled(value, value_style),
+        Span::styled(
+            truncate_display_width(&controls, max_width.saturating_sub(used_width)),
+            hint_style,
         ),
     ])
 }
@@ -3884,6 +3901,27 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "approval option line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn approval_footer_hint_line_truncates_controls_to_display_width() {
+        let line = approval_footer_hint_line(
+            Locale::ZhHans,
+            Style::default(),
+            Style::default(),
+            48,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 48);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval footer hint must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
