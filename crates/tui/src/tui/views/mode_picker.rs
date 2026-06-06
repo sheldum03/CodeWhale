@@ -188,12 +188,10 @@ impl ModalView for ModePickerView {
                 Style::default().fg(self.ui_theme.text_muted)
             };
             let pointer = if is_cursor { ">" } else { " " };
+            let label = format!("{pointer} {}. {}", row.number, pad_display_width(row.name, 7));
 
             lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{pointer} {}. {:<7}", row.number, row.name),
-                    row_style,
-                ),
+                Span::styled(label, row_style),
                 Span::styled(row.hint, hint_style),
             ]));
         }
@@ -300,6 +298,15 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
     out
 }
 
+fn pad_display_width(text: &str, width: usize) -> String {
+    let mut out = ascii_prefix(text, width);
+    let out_width = UnicodeWidthStr::width(out.as_str());
+    if out_width < width {
+        out.push_str(&" ".repeat(width - out_width));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +376,17 @@ mod tests {
         assert!(
             prefix.is_char_boundary(prefix.len()),
             "prefix must not split UTF-8 codepoints: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn mode_label_padding_uses_display_width() {
+        let padded = pad_display_width("\u{8ba1}\u{5212}", 7);
+
+        assert_eq!(UnicodeWidthStr::width(padded.as_str()), 7);
+        assert!(
+            padded.starts_with("\u{8ba1}\u{5212}"),
+            "padded mode label should preserve visible text: {padded:?}"
         );
     }
 }
