@@ -1620,6 +1620,22 @@ fn approval_card_title(
     truncate_display_width(&title, max_width)
 }
 
+fn elevation_labeled_line(
+    label: &'static str,
+    value: &str,
+    value_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let label_width = UnicodeWidthStr::width(label);
+    Line::from(vec![
+        Span::raw(label),
+        Span::styled(
+            truncate_display_width(value, max_width.saturating_sub(label_width)),
+            value_style,
+        ),
+    ])
+}
+
 fn label_type(locale: Locale) -> &'static str {
     match locale {
         Locale::ZhHans => "类型：",
@@ -1766,6 +1782,7 @@ impl Renderable for ElevationWidget<'_> {
         };
 
         Clear.render(popup_area, buf);
+        let content_width = popup_area.width.saturating_sub(4) as usize;
 
         let mut lines = vec![
             Line::from(""),
@@ -1776,15 +1793,14 @@ impl Renderable for ElevationWidget<'_> {
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
-            Line::from(vec![
-                Span::raw("  Tool: "),
-                Span::styled(
-                    &self.request.tool_name,
-                    Style::default()
-                        .fg(self.ui_theme.status_working)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
+            elevation_labeled_line(
+                "  Tool: ",
+                &self.request.tool_name,
+                Style::default()
+                    .fg(self.ui_theme.status_working)
+                    .add_modifier(Modifier::BOLD),
+                content_width,
+            ),
         ];
 
         // Show command if it's a shell command
@@ -1797,13 +1813,12 @@ impl Renderable for ElevationWidget<'_> {
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::raw("  Reason: "),
-            Span::styled(
-                &self.request.denial_reason,
-                Style::default().fg(self.ui_theme.status_warning),
-            ),
-        ]));
+        lines.push(elevation_labeled_line(
+            "  Reason: ",
+            &self.request.denial_reason,
+            Style::default().fg(self.ui_theme.status_warning),
+            content_width,
+        ));
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -3651,6 +3666,27 @@ mod tests {
         assert!(
             title.is_char_boundary(title.len()),
             "approval title must not split UTF-8 codepoints: {title:?}"
+        );
+    }
+
+    #[test]
+    fn elevation_labeled_line_truncates_value_to_display_width() {
+        let line = elevation_labeled_line(
+            "  Reason: ",
+            &"\u{62d2}\u{7edd}\u{539f}\u{56e0}".repeat(12),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "elevation line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
