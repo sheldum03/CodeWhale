@@ -1871,7 +1871,7 @@ fn render_checklist_change_card(
         .saturating_sub(UnicodeWidthStr::width(status_label.as_str()))
         .saturating_sub(2)
         .max(8);
-    let title_truncated = truncate_text(title.as_str(), title_budget);
+    let title_truncated = truncate_text_to_width(title.as_str(), title_budget);
 
     let spans = vec![
         Span::styled(
@@ -4172,6 +4172,42 @@ mod tests {
             .collect();
         assert!(summary_line.contains("3 items"), "{summary_line:?}");
         assert!(summary_line.contains("Alt+V"), "{summary_line:?}");
+    }
+
+    #[test]
+    fn render_checklist_change_card_truncates_cjk_title_by_display_width() {
+        let snapshot = super::ChecklistSnapshot {
+            items: vec![super::ChecklistItemSnapshot {
+                content: "整理视觉规范并验证窄终端中文任务标题不会撑破布局".to_string(),
+                status: "in_progress".to_string(),
+            }],
+            completion_pct: 0,
+            completed: 0,
+            total: 1,
+        };
+        let change = super::ChecklistChange {
+            id: 1,
+            status: "in_progress".to_string(),
+        };
+        let width = 42;
+        let lines = super::render_checklist_change_card(
+            "todo_update",
+            ToolStatus::Success,
+            &snapshot,
+            &change,
+            width,
+            true,
+        );
+        let change_line: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+
+        assert!(
+            UnicodeWidthStr::width(change_line.as_str()) <= width as usize,
+            "checklist change line overflowed width {width}: {change_line:?}"
+        );
+        assert!(
+            change_line.contains(history_ellipsis()),
+            "long CJK checklist title should expose truncation: {change_line:?}"
+        );
     }
 
     #[test]
