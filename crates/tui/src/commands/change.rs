@@ -12,13 +12,14 @@
 
 use crate::localization::{Locale, MessageId, tr};
 use crate::tui::app::{App, AppAction};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{CommandResult, command_rule};
 
-/// Maximum length of the changelog excerpt we'll show inline (characters).
+/// Maximum display width of the changelog excerpt we'll show inline.
 /// If the changelog section exceeds this, we truncate and show a notice.
-/// 4096 chars is large enough for most version entries.
-const MAX_INLINE_CHANGELOG_CHARS: usize = 4096;
+/// 4096 columns is large enough for most version entries.
+const MAX_INLINE_CHANGELOG_WIDTH: usize = 4096;
 const DEEPSEEK_TUI_CHANGELOG: &str = include_str!("../../CHANGELOG.md");
 
 /// Execute the `/change` command.
@@ -123,17 +124,36 @@ pub fn change(app: &mut App, version: Option<&str>) -> CommandResult {
 }
 
 fn inline_changelog_section(section: &str) -> String {
-    if section.len() <= MAX_INLINE_CHANGELOG_CHARS {
+    if UnicodeWidthStr::width(section) <= MAX_INLINE_CHANGELOG_WIDTH {
         return section.to_string();
     }
 
-    let truncated: String = section.chars().take(MAX_INLINE_CHANGELOG_CHARS).collect();
+    let (truncated, omitted_chars) =
+        truncate_changelog_section_to_width(section, MAX_INLINE_CHANGELOG_WIDTH);
     format!(
         "{truncated}\n\
 \n\
 [... {} characters omitted from the bundled DeepSeek-TUI changelog]",
-        section.len() - MAX_INLINE_CHANGELOG_CHARS
+        omitted_chars
     )
+}
+
+fn truncate_changelog_section_to_width(section: &str, max_width: usize) -> (String, usize) {
+    let mut out = String::new();
+    let mut width = 0usize;
+    let mut consumed_chars = 0usize;
+    for ch in section.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+        consumed_chars += 1;
+    }
+
+    let total_chars = section.chars().count();
+    (out, total_chars.saturating_sub(consumed_chars))
 }
 
 /// Extract the latest version section from CHANGELOG.md content.
@@ -369,6 +389,18 @@ A stabilization release.\n";
         assert!(section.contains("0.8.26"));
         assert!(section.contains("Fixed something"));
         assert!(!section.contains("0.8.25"));
+    }
+
+    #[test]
+    fn truncate_changelog_section_respects_cjk_display_width() {
+        let section = "\u{53d8}\u{66f4}".repeat(20);
+        let (truncated, omitted) = truncate_changelog_section_to_width(&section, 12);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 12,
+            "changelog excerpt overflowed display width: {truncated:?}"
+        );
+        assert!(omitted > 0, "wide changelog text should be omitted");
     }
 
     #[test]
