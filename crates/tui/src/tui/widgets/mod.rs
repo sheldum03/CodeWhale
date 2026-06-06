@@ -1407,15 +1407,13 @@ impl Renderable for ApprovalWidget<'_> {
             let shortcut_style =
                 approval_option_style(is_selected, palette_colors.shortcut, &self.ui_theme);
 
-            let spans = vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("[{}] ", opt.key_hint),
-                    shortcut_style.add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(opt.label.to_string(), option_style),
-            ];
-            lines.push(Line::from(spans));
+            lines.push(approval_option_line(
+                opt.key_hint,
+                opt.label,
+                shortcut_style.add_modifier(Modifier::BOLD),
+                option_style,
+                approval_content_width,
+            ));
         }
 
         // Footer: Enter commits the highlighted row; y/a/d remain direct
@@ -1669,6 +1667,28 @@ fn approval_header_line(
         Span::styled(
             truncate_display_width(tool_name, max_width.saturating_sub(used_width)),
             tool_style,
+        ),
+    ])
+}
+
+fn approval_option_line(
+    key_hint: &str,
+    label: &str,
+    key_style: Style,
+    label_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let prefix = "  ";
+    let key_label = format!("[{key_hint}] ");
+    let used_width =
+        UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(key_label.as_str());
+
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(key_label, key_style),
+        Span::styled(
+            truncate_display_width(label, max_width.saturating_sub(used_width)),
+            label_style,
         ),
     ])
 }
@@ -3842,6 +3862,28 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "approval header line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn approval_option_line_truncates_label_to_display_width() {
+        let line = approval_option_line(
+            "1 / y",
+            &"\u{6279}\u{51c6}\u{9009}\u{9879}".repeat(12),
+            Style::default(),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval option line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
