@@ -36,6 +36,10 @@ fn modal_block(title: &str, ui_theme: UiTheme) -> Block<'static> {
         .padding(Padding::uniform(1))
 }
 
+fn session_picker_status_text(status: &str) -> String {
+    crate::commands::command_text_with_ascii_fallback(status)
+}
+
 fn render_ascii_session_picker_chrome(
     area: Rect,
     buf: &mut Buffer,
@@ -765,8 +769,9 @@ fn build_list_lines(
                 .add_modifier(Modifier::BOLD),
         )));
     } else if let Some(status) = status {
+        let status = session_picker_status_text(status);
         lines.push(Line::from(Span::styled(
-            truncate(status, width),
+            truncate(&status, width),
             Style::default().fg(ui_theme.accent_primary),
         )));
     }
@@ -1065,6 +1070,7 @@ fn is_subsequence(needle: &str, haystack: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVarGuard;
     use chrono::Utc;
     use unicode_width::UnicodeWidthStr;
 
@@ -1207,6 +1213,37 @@ mod tests {
             status,
             palette::UI_THEME,
         )
+    }
+
+    #[test]
+    fn list_status_uses_ascii_fallback_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let sessions = vec![test_session(1, "first session")];
+        let lines = test_build_list_lines(
+            &sessions,
+            0,
+            80,
+            0,
+            5,
+            false,
+            "",
+            "recent",
+            false,
+            false,
+            "",
+            Some("Title must be 1\u{2013}100 characters \u{2713}"),
+        );
+
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Title must be 1-100 characters +"));
+        assert!(!rendered.contains('\u{2013}'));
     }
 
     fn picker_with(sessions: Vec<SessionMetadata>, scope: Option<&str>) -> SessionPickerView {

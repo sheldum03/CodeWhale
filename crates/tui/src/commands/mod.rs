@@ -107,6 +107,7 @@ pub(crate) fn command_text_with_ascii_fallback(text: impl Into<String>) -> Strin
         .replace('\u{256E}', "+")
         .replace('\u{2570}', "+")
         .replace('\u{256F}', "+")
+        .replace('\u{2013}', "-")
         .replace('\u{2014}', "-")
         .replace('\u{2026}', "...")
         .replace('\u{2022}', "-")
