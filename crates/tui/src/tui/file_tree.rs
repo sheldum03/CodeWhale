@@ -308,13 +308,15 @@ pub fn render_file_tree(
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(max_visible + 1);
 
     if state.is_loading {
+        let display = file_tree_status_line("  Building file tree...", content_width.max(1));
         lines.push(Line::from(Span::styled(
-            "  Building file tree...",
+            display,
             Style::default().fg(ui_theme.text_muted),
         )));
     } else if state.entries.is_empty() {
+        let display = file_tree_status_line("  (empty)", content_width.max(1));
         lines.push(Line::from(Span::styled(
-            "  (empty)",
+            display,
             Style::default().fg(ui_theme.text_muted),
         )));
     } else {
@@ -368,6 +370,10 @@ fn file_tree_expand_marker(is_dir: bool, expanded: bool) -> &'static str {
     file_tree_expand_marker_with_ascii(is_dir, expanded, palette::ascii_ui_enabled())
 }
 
+fn file_tree_status_line(text: &str, content_width: usize) -> String {
+    truncate_line_to_width(text, content_width)
+}
+
 fn file_tree_expand_marker_with_ascii(is_dir: bool, expanded: bool, ascii: bool) -> &'static str {
     if !is_dir {
         return "  ";
@@ -384,6 +390,7 @@ fn file_tree_expand_marker_with_ascii(is_dir: bool, expanded: bool, ascii: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn file_tree_expand_marker_has_ascii_fallback() {
@@ -397,6 +404,28 @@ mod tests {
         assert_eq!(
             file_tree_expand_marker_with_ascii(true, true, false),
             "\u{25BC} "
+        );
+    }
+
+    #[test]
+    fn file_tree_status_line_truncates_to_display_width() {
+        let display = file_tree_status_line("  Building file tree...", 16);
+
+        assert!(UnicodeWidthStr::width(display.as_str()) <= 16);
+        assert!(display.ends_with("..."));
+    }
+
+    #[test]
+    fn file_tree_status_line_respects_cjk_display_width() {
+        let display = file_tree_status_line(
+            &format!("  {}", "\u{6b63}\u{5728}\u{6784}\u{5efa}\u{6587}\u{4ef6}\u{6811}".repeat(4)),
+            12,
+        );
+
+        assert!(UnicodeWidthStr::width(display.as_str()) <= 12);
+        assert!(
+            display.is_char_boundary(display.len()),
+            "file-tree status must not split UTF-8 codepoints: {display:?}"
         );
     }
 }
