@@ -2249,7 +2249,13 @@ fn append_subagent_group(
         let (status, status_style, status_detail) =
             format_agent_status(&agent.status, ui_theme);
 
-        lines.push(render_subagent_row(agent, status, status_style, ui_theme));
+        lines.push(render_subagent_row(
+            agent,
+            status,
+            status_style,
+            ui_theme,
+            content_width,
+        ));
 
         if let Some(detail) = status_detail {
             let max_len = content_width.saturating_sub(10);
@@ -2294,6 +2300,7 @@ fn render_subagent_row(
     status: &str,
     status_style: ratatui::style::Style,
     ui_theme: UiTheme,
+    content_width: usize,
 ) -> ratatui::text::Line<'static> {
     use ratatui::{
         style::Style,
@@ -2304,7 +2311,7 @@ fn render_subagent_row(
     let display_name = agent.nickname.as_deref().unwrap_or(&id);
     let kind = format_agent_type(&agent.agent_type);
 
-    Line::from(vec![
+    let spans = vec![
         Span::raw("  "),
         Span::styled(
             pad_view_text(display_name, 12),
@@ -2328,7 +2335,37 @@ fn render_subagent_row(
             format!("{:>6}ms", agent.duration_ms),
             Style::default().fg(ui_theme.text_dim),
         ),
-    ])
+    ];
+
+    Line::from(truncate_spans_to_width(spans, content_width))
+}
+
+fn truncate_spans_to_width(
+    spans: Vec<ratatui::text::Span<'static>>,
+    max_width: usize,
+) -> Vec<ratatui::text::Span<'static>> {
+    if max_width == 0 {
+        return Vec::new();
+    }
+
+    let mut remaining = max_width;
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        let content = span.content.as_ref();
+        let content_width = UnicodeWidthStr::width(content);
+        if content_width <= remaining {
+            remaining = remaining.saturating_sub(content_width);
+            out.push(span);
+            continue;
+        }
+
+        let clipped = truncate_view_text(content, remaining);
+        if !clipped.is_empty() {
+            out.push(ratatui::text::Span::styled(clipped, span.style));
+        }
+        break;
+    }
+    out
 }
 
 fn agent_type_order(agent_type: &SubAgentType) -> u8 {
@@ -2728,6 +2765,7 @@ mod tests {
             "running",
             Style::default(),
             palette::DEEPSEEK_SHELL_UI_THEME,
+            64,
         );
         let plain = line
             .spans
@@ -2739,6 +2777,38 @@ mod tests {
             UnicodeWidthStr::width(plain.as_str()),
             64,
             "sub-agent row should keep fixed visual columns: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn subagent_row_truncates_to_content_width() {
+        let mut agent = manager_agent(
+            "agent_\u{5bbd}\u{5b57}\u{7b26}_identifier",
+            SubAgentStatus::Running,
+        );
+        agent.nickname =
+            Some("\u{6267}\u{884c}\u{5668}\u{89d2}\u{8272}\u{5f88}\u{957f}".to_string());
+
+        let line = render_subagent_row(
+            &agent,
+            "running",
+            Style::default(),
+            palette::DEEPSEEK_SHELL_UI_THEME,
+            40,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(
+            UnicodeWidthStr::width(plain.as_str()) <= 40,
+            "sub-agent row should fit content width: {plain:?}"
+        );
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "sub-agent row must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
