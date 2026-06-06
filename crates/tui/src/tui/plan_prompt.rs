@@ -208,6 +208,8 @@ impl ModalView for PlanPromptView {
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        let popup_area = centered_rect(72, 52, area);
+        let content_width = usize::from(popup_area.width.saturating_sub(4).max(1));
         let mut lines: Vec<Line> = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             "Action required",
@@ -222,7 +224,7 @@ impl ModalView for PlanPromptView {
         // v0.8.44: render plan details when update_plan was called (#834)
         if let Some(ref plan) = self.plan {
             if let Some(ref explanation) = plan.explanation {
-                for line in wrap_text(explanation, 68) {
+                for line in wrap_text(explanation, content_width) {
                     lines.push(Line::from(Span::styled(
                         line,
                         Style::default().fg(self.ui_theme.text_muted),
@@ -237,10 +239,12 @@ impl ModalView for PlanPromptView {
                 )));
                 for item in &plan.items {
                     let status_mark = plan_step_status_mark(item.status);
-                    lines.push(Line::from(Span::styled(
-                        format!("  {status_mark} {}", item.step),
-                        Style::default().fg(self.ui_theme.text_body),
-                    )));
+                    for line in plan_step_lines(status_mark, &item.step, content_width) {
+                        lines.push(Line::from(Span::styled(
+                            line,
+                            Style::default().fg(self.ui_theme.text_body),
+                        )));
+                    }
                 }
                 lines.push(Line::from(""));
             }
@@ -276,7 +280,6 @@ impl ModalView for PlanPromptView {
             Span::styled(" close", Style::default().fg(self.ui_theme.text_muted)),
         ]));
 
-        let popup_area = centered_rect(72, 52, area);
         render_modal_chrome(area, popup_area, buf);
         if palette::ascii_ui_enabled() {
             let inner = render_ascii_plan_prompt_chrome(popup_area, buf, self.ui_theme);
@@ -391,6 +394,29 @@ fn plan_step_status_mark(status: crate::tools::plan::StepStatus) -> &'static str
         (crate::tools::plan::StepStatus::InProgress, false) => "\u{25b6}",
         (crate::tools::plan::StepStatus::Completed, false) => "\u{2713}",
     }
+}
+
+fn plan_step_lines(status_mark: &str, step: &str, width: usize) -> Vec<String> {
+    let first_prefix = format!("  {status_mark} ");
+    let continuation_prefix = "    ";
+    let first_width = UnicodeWidthStr::width(first_prefix.as_str());
+    let continuation_width = UnicodeWidthStr::width(continuation_prefix);
+    let first_content_width = width.saturating_sub(first_width).max(1);
+    let continuation_content_width = width.saturating_sub(continuation_width).max(1);
+
+    let mut wrapped = wrap_text(step, first_content_width);
+    if wrapped.is_empty() {
+        return vec![first_prefix];
+    }
+
+    let first = format!("{first_prefix}{}", wrapped.remove(0));
+    let mut lines = vec![first];
+    for line in wrapped {
+        for continuation in wrap_text(&line, continuation_content_width) {
+            lines.push(format!("{continuation_prefix}{continuation}"));
+        }
+    }
+    lines
 }
 
 /// Wrap text into lines no wider than `width` terminal display columns.
@@ -533,6 +559,28 @@ mod tests {
                 ("\u{b7}", "\u{25b6}", "\u{2713}")
             );
         }
+    }
+
+    #[test]
+    fn plan_step_lines_wrap_to_display_width() {
+        let lines = plan_step_lines(
+            ">",
+            &"\u{8ba1}\u{5212}\u{6b65}\u{9aa4}\u{9700}\u{8981}\u{7a84}\u{5b9a}\u{5bbd}\u{5ea6}".repeat(4),
+            24,
+        );
+
+        assert!(lines.len() > 1);
+        for line in &lines {
+            assert!(
+                UnicodeWidthStr::width(line.as_str()) <= 24,
+                "plan step line overflowed display width: {line:?}"
+            );
+            assert!(
+                line.is_char_boundary(line.len()),
+                "plan step line must not split UTF-8 codepoints: {line:?}"
+            );
+        }
+        assert!(lines[1].starts_with("    "));
     }
 
     #[test]
