@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::client::DeepSeekClient;
 use crate::models::Tool;
@@ -28,6 +29,24 @@ fn large_output_truncation_note() -> &'static str {
     } else {
         "\n\u{2026} [output truncated \u{2014} full text in workshop variable `last_tool_result`]"
     }
+}
+
+fn truncate_for_display_width(text: &str, max_width: usize) -> (String, bool) {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return (text.to_string(), false);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    (out, true)
 }
 
 // === Types ===
@@ -169,9 +188,10 @@ impl ToolRegistry {
                     // a live API call so the engine stays dependency-free at
                     // the registry layer. A follow-up can wire in the Flash
                     // client when the async LLM call is safe here.
-                    let preview_chars = 1_200usize;
-                    let preview: String = result.content.chars().take(preview_chars).collect();
-                    let ellipsis = if result.content.chars().count() > preview_chars {
+                    let preview_width = 1_200usize;
+                    let (preview, truncated) =
+                        truncate_for_display_width(&result.content, preview_width);
+                    let ellipsis = if truncated {
                         large_output_truncation_note()
                     } else {
                         ""
@@ -1140,6 +1160,7 @@ mod tests {
 
     use serde_json::{Value, json};
     use tempfile::tempdir;
+    use unicode_width::UnicodeWidthStr;
 
     use crate::config::ToolOverride;
     use crate::test_support::{EnvVarGuard, lock_test_env};
@@ -1208,6 +1229,16 @@ mod tests {
             large_output_truncation_note(),
             "\n\u{2026} [output truncated \u{2014} full text in workshop variable `last_tool_result`]"
         );
+    }
+
+    #[test]
+    fn large_output_preview_truncates_by_display_width() {
+        let text = "检索结果".repeat(400);
+        let (preview, truncated) = super::truncate_for_display_width(&text, 25);
+
+        assert!(truncated);
+        assert!(UnicodeWidthStr::width(preview.as_str()) <= 25);
+        assert!(preview.chars().count() < 25);
     }
 
     fn make_test_tool(name: &str) -> Arc<TestTool> {
