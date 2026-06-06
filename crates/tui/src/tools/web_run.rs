@@ -1449,26 +1449,57 @@ fn normalize_whitespace(text: &str) -> String {
 }
 
 fn wrap_line(text: &str, width: usize) -> Vec<String> {
-    if text.len() <= width {
+    if unicode_width::UnicodeWidthStr::width(text) <= width {
         return vec![text.to_string()];
     }
     let mut lines = Vec::new();
     let mut current = String::new();
+    let mut current_width = 0usize;
     for word in text.split_whitespace() {
-        if current.is_empty() {
-            current.push_str(word);
-        } else if current.len() + word.len() < width {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            current = word.to_string();
+        for part in split_word_to_width(word, width) {
+            let part_width = unicode_width::UnicodeWidthStr::width(part.as_str());
+            if current.is_empty() {
+                current = part;
+                current_width = part_width;
+            } else if current_width + 1 + part_width <= width {
+                current.push(' ');
+                current.push_str(&part);
+                current_width += 1 + part_width;
+            } else {
+                lines.push(current);
+                current = part;
+                current_width = part_width;
+            }
         }
     }
     if !current.is_empty() {
         lines.push(current);
     }
     lines
+}
+
+fn split_word_to_width(word: &str, width: usize) -> Vec<String> {
+    if width == 0 || unicode_width::UnicodeWidthStr::width(word) <= width {
+        return vec![word.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+    for ch in word.chars() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if !current.is_empty() && current_width + ch_width > width {
+            chunks.push(current);
+            current = String::new();
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 fn decode_html_entities(text: &str) -> String {
@@ -1669,6 +1700,20 @@ mod tests {
         let wrapped = wrap_line(line, 20);
         assert!(wrapped.len() > 1);
         assert!(wrapped.iter().all(|l| l.len() <= 20));
+    }
+
+    #[test]
+    fn wrap_line_splits_cjk_by_display_width() {
+        let line = "搜索结果摘要需要在窄终端里保持可读";
+        let wrapped = wrap_line(line, 10);
+
+        assert!(wrapped.len() > 1, "expected wrapped CJK line: {wrapped:?}");
+        assert!(
+            wrapped
+                .iter()
+                .all(|line| unicode_width::UnicodeWidthStr::width(line.as_str()) <= 10),
+            "wrapped CJK line exceeded display width: {wrapped:?}"
+        );
     }
 
     #[test]
