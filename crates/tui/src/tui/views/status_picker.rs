@@ -253,13 +253,6 @@ impl ModalView for StatusPickerView {
             } else {
                 Style::default().fg(self.ui_theme.text_muted)
             };
-            let hint_style = if is_cursor {
-                Style::default()
-                    .fg(self.ui_theme.selection_text)
-                    .bg(self.ui_theme.selection_bg)
-            } else {
-                Style::default().fg(self.ui_theme.text_dim)
-            };
             let pointer = status_pointer(is_cursor);
 
             if is_cursor {
@@ -270,14 +263,8 @@ impl ModalView for StatusPickerView {
                 let line = status_row_text(pointer, mark, item, inner.width as usize);
                 lines.push(Line::from(Span::styled(line, selected_style)));
             } else {
-                lines.push(Line::from(vec![
-                    Span::styled(format!(" {pointer} "), row_style),
-                    Span::styled(mark.to_string(), row_style),
-                    Span::styled(" ", row_style),
-                    Span::styled(item.label().to_string(), row_style),
-                    Span::styled("  ", row_style),
-                    Span::styled(format!("({})", item.hint()), hint_style),
-                ]));
+                let line = status_row_text(pointer, mark, item, inner.width as usize);
+                lines.push(Line::from(Span::styled(line, row_style)));
             }
         }
 
@@ -544,6 +531,21 @@ mod tests {
         );
         assert_eq!(text.width(), 40);
         assert!(text.starts_with(" \u{25B8} [ ] Last tool elapsed"));
+    }
+
+    #[test]
+    fn inactive_row_text_fills_available_width() {
+        let text = status_row_text(
+            status_pointer_for_ascii(false, false),
+            "[ ]",
+            &StatusItem::LastToolElapsed,
+            24,
+        );
+        assert_eq!(text.width(), 24);
+        assert!(
+            text.is_char_boundary(text.len()),
+            "row must not split UTF-8 codepoints: {text:?}"
+        );
     }
 
     #[test]
