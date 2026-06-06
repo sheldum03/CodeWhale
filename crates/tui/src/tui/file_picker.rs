@@ -400,9 +400,10 @@ impl ModalView for FilePickerView {
 
         let mut lines: Vec<Line<'static>> = Vec::new();
         // Query line.
+        let query_width = usize::from(inner.width).saturating_sub(3);
         lines.push(Line::from(vec![
             Span::styled("> ", Style::default().fg(self.ui_theme.accent_primary).bold()),
-            Span::raw(self.query.clone()),
+            Span::raw(truncate_query(&self.query, query_width)),
             Span::styled(
                 " ",
                 Style::default()
@@ -449,6 +450,32 @@ impl ModalView for FilePickerView {
             .style(Style::default().fg(self.ui_theme.text_body))
             .render(inner, buf);
     }
+}
+
+fn truncate_query(query: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(query) <= max_width {
+        return query.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(3);
+    for ch in query.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str("...");
+    out
 }
 
 fn render_ascii_file_picker_chrome(
@@ -948,6 +975,30 @@ mod tests {
             truncated.ends_with(".rs"),
             "truncated path should preserve the useful suffix: {truncated:?}"
         );
+    }
+
+    #[test]
+    fn truncate_query_respects_cjk_display_width() {
+        let query = "界面路径查询".repeat(8);
+        let truncated = truncate_query(&query, 14);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 14,
+            "truncated query overflowed display width: {truncated:?}"
+        );
+        assert!(
+            truncated.is_char_boundary(truncated.len()),
+            "truncated query must not split UTF-8 codepoints: {truncated:?}"
+        );
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_query_handles_tiny_widths() {
+        for width in 0..=3 {
+            let truncated = truncate_query("abcdef", width);
+            assert_eq!(UnicodeWidthStr::width(truncated.as_str()), width);
+        }
     }
 
     #[test]
