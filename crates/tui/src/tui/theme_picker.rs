@@ -314,10 +314,7 @@ impl ModalView for ThemePickerView {
             let mut spans: Vec<Span> = Vec::with_capacity(8);
             spans.push(Span::styled(format!(" {pointer} "), row_style));
             spans.push(Span::styled(format!("{}. ", idx + 1), number_style));
-            spans.push(Span::styled(
-                format!("{:<22}", id.display_name()),
-                row_style,
-            ));
+            spans.push(Span::styled(pad_display_width(id.display_name(), 22), row_style));
             spans.extend(swatch);
             spans.push(Span::raw("  "));
             spans.push(Span::styled(id.tagline(), tagline_style));
@@ -441,6 +438,15 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
             }
         })
         .collect()
+}
+
+fn pad_display_width(text: &str, width: usize) -> String {
+    let mut out = ascii_prefix(text, width);
+    let out_width = UnicodeWidthStr::width(out.as_str());
+    if out_width < width {
+        out.push_str(&" ".repeat(width - out_width));
+    }
+    out
 }
 
 fn theme_picker_pointer_with_ascii(is_selected: bool, ascii: bool) -> &'static str {
@@ -716,6 +722,17 @@ mod tests {
         assert!(
             prefix.is_char_boundary(prefix.len()),
             "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn theme_name_padding_uses_display_width() {
+        let padded = pad_display_width("\u{4e3b}\u{9898}\u{9009}\u{62e9}", 10);
+
+        assert_eq!(UnicodeWidthStr::width(padded.as_str()), 10);
+        assert!(
+            padded.starts_with("\u{4e3b}\u{9898}\u{9009}\u{62e9}"),
+            "padded theme name should preserve visible text: {padded:?}"
         );
     }
 
