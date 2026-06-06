@@ -6951,6 +6951,16 @@ fn truncate_line_to_width_respects_display_width_for_tiny_budgets() {
     assert!(UnicodeWidthStr::width(trimmed_long.as_str()) <= 10);
 }
 
+#[test]
+fn receipt_summary_truncation_uses_display_width() {
+    let summary = "工具结果".repeat(30);
+    let truncated = truncate_line_to_width(&summary, 60);
+
+    assert!(UnicodeWidthStr::width(truncated.as_str()) <= 60);
+    assert!(truncated.chars().count() < 60);
+    assert!(truncated.ends_with("..."));
+}
+
 /// Regression for #86. A recoverable engine error (stream stall, transient
 /// disconnect, retryable server hiccup) must NOT flip the session into
 /// offline mode. Until this fix the UI matched on `EngineEvent::Error {

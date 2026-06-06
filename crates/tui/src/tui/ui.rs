@@ -1944,11 +1944,7 @@ async fn run_event_loop(
                                     crate::tui::widgets::footer_separator()
                                 );
                                 for evidence in &app.tool_evidence {
-                                    let summary = crate::utils::truncate_with_ellipsis(
-                                        &evidence.summary,
-                                        60,
-                                        ui_ellipsis(),
-                                    );
+                                    let summary = truncate_line_to_width(&evidence.summary, 60);
                                     let _ = write!(
                                         receipt,
                                         "{}{}: {summary}",
