@@ -82,6 +82,61 @@ fn push_option_lines(
     )));
 }
 
+fn custom_response_line(
+    value: &str,
+    body_style: Style,
+    value_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let label = "> Custom response:";
+    let gap = " ";
+    let label_width = UnicodeWidthStr::width(label);
+    if max_width <= label_width {
+        return Line::from(Span::styled(fit_text(label, max_width), body_style));
+    }
+    let used_width = label_width + UnicodeWidthStr::width(gap);
+    let display = if value.is_empty() {
+        "(type your response)"
+    } else {
+        value
+    };
+
+    Line::from(vec![
+        Span::styled(label, body_style),
+        Span::raw(gap),
+        Span::styled(
+            fit_text(display, max_width.saturating_sub(used_width)),
+            value_style,
+        ),
+    ])
+}
+
+fn fit_text(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(3);
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str("...");
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
     Selecting,
@@ -268,6 +323,8 @@ impl ModalView for UserInputView {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let question = self.current_question();
         let total = self.request.questions.len();
+        let popup_area = centered_rect(82, 68, area);
+        let content_width = usize::from(popup_area.width.saturating_sub(4).max(1));
         let header = format!(
             " {} ({}/{}) ",
             question.header,
@@ -322,21 +379,12 @@ impl ModalView for UserInputView {
 
         if self.mode == InputMode::OtherInput {
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "> Custom response:",
-                    Style::default().fg(self.ui_theme.text_body).bold(),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    if self.other_input.is_empty() {
-                        "(type your response)".to_string()
-                    } else {
-                        self.other_input.clone()
-                    },
-                    Style::default().fg(self.ui_theme.accent_primary),
-                ),
-            ]));
+            lines.push(custom_response_line(
+                &self.other_input,
+                Style::default().fg(self.ui_theme.text_body).bold(),
+                Style::default().fg(self.ui_theme.accent_primary),
+                content_width,
+            ));
         }
 
         lines.push(Line::from(""));
@@ -373,7 +421,6 @@ impl ModalView for UserInputView {
             ]));
         }
 
-        let popup_area = centered_rect(82, 68, area);
         render_modal_chrome(area, popup_area, buf);
         if palette::ascii_ui_enabled() {
             let inner = render_ascii_user_input_chrome(popup_area, buf, &header, self.ui_theme);
@@ -561,6 +608,39 @@ mod tests {
         assert!(rendered.contains("Need one more pass"));
         assert!(rendered.contains("Enter"));
         assert!(rendered.contains("submit"));
+    }
+
+    #[test]
+    fn custom_response_line_truncates_to_display_width() {
+        let line = custom_response_line(
+            &"\u{81ea}\u{5b9a}\u{4e49}\u{56de}\u{7b54}".repeat(12),
+            Style::default(),
+            Style::default(),
+            32,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 32);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "custom response line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn custom_response_line_handles_tiny_widths() {
+        let line = custom_response_line("value", Style::default(), Style::default(), 8);
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 8);
     }
 
     #[test]
