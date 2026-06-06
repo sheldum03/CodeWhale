@@ -474,15 +474,7 @@ impl ModalView for PagerView {
             )));
         }
 
-        let footer = Line::from(vec![
-            Span::styled(
-                FOOTER_HINT_EXIT,
-                Style::default()
-                    .fg(self.ui_theme.accent_secondary)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(FOOTER_HINT_NAV, Style::default().fg(self.ui_theme.text_hint)),
-        ]);
+        let footer = pager_footer_line(popup_area.width.saturating_sub(4) as usize, self.ui_theme);
         if palette::ascii_ui_enabled() {
             let inner = render_ascii_pager_chrome(popup_area, buf, &self.title, self.ui_theme);
             Paragraph::new(visible_lines)
@@ -509,6 +501,43 @@ impl ModalView for PagerView {
             paragraph.render(popup_area, buf);
         }
     }
+}
+
+fn pager_footer_line(max_width: usize, theme: UiTheme) -> Line<'static> {
+    let exit_style = Style::default()
+        .fg(theme.accent_secondary)
+        .add_modifier(Modifier::BOLD);
+    let nav_style = Style::default().fg(theme.text_hint);
+    let spans = vec![
+        Span::styled(FOOTER_HINT_EXIT, exit_style),
+        Span::styled(FOOTER_HINT_NAV, nav_style),
+    ];
+    Line::from(truncate_spans_to_width(spans, max_width))
+}
+
+fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'static>> {
+    if max_width == 0 {
+        return Vec::new();
+    }
+
+    let mut remaining = max_width;
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        let content = span.content.as_ref();
+        let content_width = UnicodeWidthStr::width(content);
+        if content_width <= remaining {
+            remaining = remaining.saturating_sub(content_width);
+            out.push(span);
+            continue;
+        }
+
+        let clipped = ascii_prefix(content, remaining);
+        if !clipped.is_empty() {
+            out.push(Span::styled(clipped, span.style));
+        }
+        break;
+    }
+    out
 }
 
 fn render_ascii_pager_chrome(
@@ -949,6 +978,22 @@ mod tests {
                 "footer hint missing {needle:?}: {full_hint}"
             );
         }
+    }
+
+    #[test]
+    fn footer_hint_truncates_to_display_width() {
+        let line = pager_footer_line(18, palette::DEEPSEEK_SHELL_UI_THEME);
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 18);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "footer hint must not split UTF-8 codepoints: {plain:?}"
+        );
     }
 
     #[test]
