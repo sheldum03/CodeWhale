@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::time::Instant;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::hooks::HookEvent;
 use crate::tools::ReviewOutput;
@@ -1169,14 +1170,23 @@ fn summarize_interaction_input(input: &str) -> String {
     single_line = single_line.replace('\n', "\\n");
     single_line = single_line.replace('\"', "'");
     let max_len = 80;
-    if single_line.chars().count() <= max_len {
+    if UnicodeWidthStr::width(single_line.as_str()) <= max_len {
         return format!("\"{single_line}\"");
     }
     let mut out = String::new();
-    for ch in single_line.chars().take(max_len.saturating_sub(3)) {
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = max_len.saturating_sub(ellipsis_width);
+    let mut used = 0usize;
+    for ch in single_line.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > content_width {
+            break;
+        }
         out.push(ch);
+        used += ch_width;
     }
-    out.push_str("...");
+    out.push_str(ellipsis);
     format!("\"{out}\"")
 }
 
@@ -1185,4 +1195,21 @@ fn exec_is_background(input: &serde_json::Value) -> bool {
         .get("background")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn summarize_interaction_input_truncates_cjk_by_display_width() {
+        let summary = summarize_interaction_input(&"\u{8f93}\u{5165}".repeat(50));
+
+        assert!(
+            UnicodeWidthStr::width(summary.as_str()) <= 82,
+            "quoted interaction preview overflowed display width: {summary:?}"
+        );
+        assert!(summary.ends_with("...\""));
+    }
 }
