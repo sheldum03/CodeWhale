@@ -2,6 +2,7 @@
 
 use crate::localization::{Locale, MessageId, tr};
 use crate::tui::app::App;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::CommandResult;
 
@@ -124,14 +125,23 @@ fn parse_index(input: Option<&str>, locale: Locale) -> Result<usize, String> {
 }
 
 fn truncate_preview(text: &str) -> String {
-    if text.chars().count() <= PREVIEW_LIMIT {
+    if UnicodeWidthStr::width(text) <= PREVIEW_LIMIT {
         return text.to_string();
     }
     let mut out = String::new();
-    for ch in text.chars().take(PREVIEW_LIMIT.saturating_sub(3)) {
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = PREVIEW_LIMIT.saturating_sub(ellipsis_width);
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > content_width {
+            break;
+        }
         out.push(ch);
+        used += ch_width;
     }
-    out.push_str("...");
+    out.push_str(ellipsis);
     out
 }
 
@@ -353,6 +363,18 @@ mod tests {
         let long_text = "x".repeat(200);
         let result = truncate_preview(&long_text);
         assert!(result.len() <= PREVIEW_LIMIT + 3);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_preview_cjk_display_width() {
+        let text = "\u{6392}\u{961f}".repeat(80);
+        let result = truncate_preview(&text);
+
+        assert!(
+            UnicodeWidthStr::width(result.as_str()) <= PREVIEW_LIMIT,
+            "queue preview overflowed display width: {result:?}"
+        );
         assert!(result.ends_with("..."));
     }
 
