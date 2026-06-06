@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
@@ -81,11 +82,8 @@ impl ToolSpec for NotifyTool {
         let title_raw = required_str(&input, "title")?;
         let body_raw = optional_str(&input, "body").unwrap_or("");
 
-        // Char-bounded truncation (not byte-bounded) so we don't slice
-        // through a multi-byte sequence and emit invalid UTF-8 to the
-        // terminal.
-        let title: String = title_raw.chars().take(NOTIFY_TITLE_CAP).collect();
-        let body: String = body_raw.chars().take(NOTIFY_BODY_CAP).collect();
+        let title = truncate_display_width(title_raw, NOTIFY_TITLE_CAP);
+        let body = truncate_display_width(body_raw, NOTIFY_BODY_CAP);
         let title = title.trim();
         let body = body.trim();
 
@@ -115,6 +113,24 @@ impl ToolSpec for NotifyTool {
 
         Ok(ToolResult::success(format!("notified: {title}")))
     }
+}
+
+fn truncate_display_width(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -154,6 +170,21 @@ mod tests {
         // Confirmation message echoes the *truncated* title.
         let echo_x_count = result.content.matches('x').count();
         assert_eq!(echo_x_count, NOTIFY_TITLE_CAP);
+    }
+
+    #[tokio::test]
+    async fn truncates_title_by_display_width() {
+        let result = NotifyTool
+            .execute(json!({"title": "通知完成".repeat(40)}), &ctx())
+            .await
+            .expect("ok");
+        let title = result
+            .content
+            .strip_prefix("notified: ")
+            .expect("confirmation prefix");
+
+        assert!(UnicodeWidthStr::width(title) <= NOTIFY_TITLE_CAP);
+        assert!(title.chars().count() < NOTIFY_TITLE_CAP);
     }
 
     #[tokio::test]
