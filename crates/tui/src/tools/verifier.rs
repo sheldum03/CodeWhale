@@ -13,6 +13,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::dependencies::ExternalTool;
 
@@ -918,34 +919,36 @@ fn render_command(program: Option<&str>, args: &[String]) -> String {
     parts.join(" ")
 }
 
-fn truncate_with_note(text: &str, max_chars: usize) -> (String, bool) {
-    if text.chars().count() <= max_chars {
+fn truncate_with_note(text: &str, max_width: usize) -> (String, bool) {
+    if UnicodeWidthStr::width(text) <= max_width {
         return (text.to_string(), false);
     }
-    let end = char_boundary_index(text, max_chars);
-    let truncated = &text[..end];
+
+    let truncated = take_display_width(text, max_width);
     let omitted_chars = text
         .chars()
         .count()
         .saturating_sub(truncated.chars().count());
     (
         format!(
-            "{truncated}\n\n[output truncated to {max_chars} characters; {omitted_chars} characters omitted]"
+            "{truncated}\n\n[output truncated to {max_width} display columns; {omitted_chars} characters omitted]"
         ),
         true,
     )
 }
 
-fn char_boundary_index(text: &str, max_chars: usize) -> usize {
-    if max_chars == 0 {
-        return 0;
-    }
-    for (count, (idx, _)) in text.char_indices().enumerate() {
-        if count == max_chars {
-            return idx;
+fn take_display_width(text: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
         }
+        out.push(ch);
+        width += ch_width;
     }
-    text.len()
+    out
 }
 
 #[cfg(test)]
@@ -1025,6 +1028,20 @@ mod tests {
         );
 
         assert!(!has_meaningful_script(&scripts, "test"));
+    }
+
+    #[test]
+    fn verifier_output_truncates_cjk_by_display_width() {
+        let (truncated, did_truncate) = truncate_with_note(&"验证输出".repeat(40), 31);
+        let prefix = truncated
+            .split_once("\n\n[output truncated")
+            .map(|(prefix, _)| prefix)
+            .expect("truncation note");
+
+        assert!(did_truncate);
+        assert!(UnicodeWidthStr::width(prefix) <= 31);
+        assert!(prefix.chars().count() < 31);
+        assert!(truncated.contains("display columns"));
     }
 
     #[tokio::test]
