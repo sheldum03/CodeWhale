@@ -2,10 +2,11 @@
 
 use crate::session_manager::{SessionManager, update_session};
 use crate::tui::app::App;
+use unicode_width::UnicodeWidthStr;
 
 use super::CommandResult;
 
-const MAX_TITLE_LEN: usize = 100;
+const MAX_TITLE_WIDTH: usize = 100;
 
 /// Rename the current session to the given title.
 ///
@@ -19,8 +20,10 @@ pub fn rename(app: &mut App, arg: Option<&str>) -> CommandResult {
         None => return CommandResult::error("Usage: /rename <new title>"),
     };
 
-    if new_title.chars().count() > MAX_TITLE_LEN {
-        return CommandResult::error(format!("Title too long (max {MAX_TITLE_LEN} characters)"));
+    if title_display_width(new_title) > MAX_TITLE_WIDTH {
+        return CommandResult::error(format!(
+            "Title too long (max {MAX_TITLE_WIDTH} terminal columns)"
+        ));
     }
 
     let session_id = match &app.current_session_id {
@@ -38,6 +41,10 @@ pub fn rename(app: &mut App, arg: Option<&str>) -> CommandResult {
     };
 
     rename_with_manager(new_title, &session_id, &manager, app)
+}
+
+fn title_display_width(title: &str) -> usize {
+    UnicodeWidthStr::width(title)
 }
 
 fn rename_with_manager(
@@ -138,10 +145,30 @@ mod tests {
     fn rename_title_too_long_returns_error() {
         let tmp = TempDir::new().unwrap();
         let mut app = make_app(&tmp);
-        let long_title = "a".repeat(MAX_TITLE_LEN + 1);
+        let long_title = "a".repeat(MAX_TITLE_WIDTH + 1);
         let r = rename(&mut app, Some(&long_title));
         assert!(r.is_error);
         assert!(r.message.unwrap().contains("too long"));
+    }
+
+    #[test]
+    fn rename_title_limit_uses_display_width() {
+        assert_eq!(
+            title_display_width(&"a".repeat(MAX_TITLE_WIDTH)),
+            MAX_TITLE_WIDTH
+        );
+        assert_eq!(title_display_width(&"界".repeat(50)), MAX_TITLE_WIDTH);
+        assert!(title_display_width(&"界".repeat(51)) > MAX_TITLE_WIDTH);
+    }
+
+    #[test]
+    fn rename_rejects_wide_title_over_display_width() {
+        let tmp = TempDir::new().unwrap();
+        let mut app = make_app(&tmp);
+        let wide_title = "界".repeat(51);
+        let r = rename(&mut app, Some(&wide_title));
+        assert!(r.is_error);
+        assert!(r.message.unwrap().contains("terminal columns"));
     }
 
     #[test]
@@ -174,7 +201,7 @@ mod tests {
         let session_id = session.metadata.id.clone();
         manager.save_session(&session).unwrap();
 
-        let max_title = "中".repeat(MAX_TITLE_LEN);
+        let max_title = "a".repeat(MAX_TITLE_WIDTH);
         let result = rename_with_manager(&max_title, &session_id, &manager, &app);
         assert!(!result.is_error);
 
