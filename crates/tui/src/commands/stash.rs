@@ -7,6 +7,7 @@
 
 use crate::composer_stash;
 use crate::tui::app::App;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{CommandResult, command_ellipsis, command_text_separator};
 
@@ -97,20 +98,30 @@ fn stash_empty_pop_message() -> String {
     format!("Stash empty{}nothing to pop.", command_text_separator())
 }
 
-/// Take a one-line preview of `text`, capped at `max_chars`.
+/// Take a one-line preview of `text`, capped at display width.
 /// Multi-line drafts get a single-line summary so the listing
 /// stays scannable.
-fn preview_first_line(text: &str, max_chars: usize) -> String {
+fn preview_first_line(text: &str, max_width: usize) -> String {
     let head = text.lines().next().unwrap_or("").trim();
-    if head.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(head) <= max_width {
         return head.to_string();
     }
     let marker = command_ellipsis();
-    let marker_len = marker.chars().count();
-    if max_chars <= marker_len {
-        return marker.chars().take(max_chars).collect();
+    let marker_width = UnicodeWidthStr::width(marker);
+    if max_width <= marker_width {
+        return ".".repeat(max_width);
     }
-    let mut out: String = head.chars().take(max_chars - marker_len).collect();
+    let content_width = max_width.saturating_sub(marker_width);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in head.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > content_width {
+            break;
+        }
+        out.push(ch);
+        used += ch_width;
+    }
     out.push_str(marker);
     out
 }
@@ -125,6 +136,18 @@ mod tests {
         let body = "x".repeat(200);
         let p = preview_first_line(&body, 10);
         assert_eq!(p.chars().count(), 10);
+        assert!(p.ends_with(command_ellipsis()));
+    }
+
+    #[test]
+    fn preview_first_line_truncates_cjk_to_display_width() {
+        let body = "\u{8349}\u{7a3f}".repeat(20);
+        let p = preview_first_line(&body, 10);
+
+        assert!(
+            UnicodeWidthStr::width(p.as_str()) <= 10,
+            "stash preview overflowed display width: {p:?}"
+        );
         assert!(p.ends_with(command_ellipsis()));
     }
 
