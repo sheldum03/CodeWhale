@@ -1517,7 +1517,7 @@ impl GenericToolCell {
         {
             for (idx, prompt) in prompts.iter().enumerate() {
                 let label = if idx == 0 { "prompts" } else { "" };
-                let value = format!("[{idx}] {}", truncate_text(prompt.trim(), 200));
+                let value = format!("[{idx}] {}", truncate_text_to_width(prompt.trim(), 200));
                 lines.extend(render_card_detail_line(
                     if label.is_empty() { None } else { Some(label) },
                     &value,
@@ -2155,7 +2155,7 @@ pub fn summarize_tool_output(output: &str) -> String {
                 parts.push(format!("status: {status}"));
             }
             if let Some(message) = obj.get("message").and_then(|v| v.as_str()) {
-                parts.push(truncate_text(message, TOOL_TEXT_LIMIT));
+                parts.push(truncate_text_to_width(message, TOOL_TEXT_LIMIT));
             }
             if let Some(task_id) = obj.get("task_id").and_then(|v| v.as_str()) {
                 parts.push(format!("task_id: {task_id}"));
@@ -2168,7 +2168,7 @@ pub fn summarize_tool_output(output: &str) -> String {
                 .or_else(|| obj.get("url"))
                 .and_then(|v| v.as_str())
             {
-                parts.push(format!("url: {}", truncate_text(url, 120)));
+                parts.push(format!("url: {}", truncate_text_to_width(url, 120)));
             }
             if let Some(data) = obj.get("data") {
                 parts.push(format!("data: {}", summarize_inline_value(data, 80, true)));
@@ -2190,7 +2190,7 @@ pub fn summarize_tool_output(output: &str) -> String {
         return summarize_inline_value(&json, TOOL_TEXT_LIMIT, true);
     }
 
-    truncate_text(output, TOOL_TEXT_LIMIT)
+    truncate_text_to_width(output, TOOL_TEXT_LIMIT)
 }
 
 // === MCP Output Summaries ===
@@ -3220,18 +3220,6 @@ fn details_affordance_line(text: &str, style: Style) -> Line<'static> {
         ),
         Span::styled(text.to_string(), style),
     ])
-}
-
-fn truncate_text(text: &str, max_len: usize) -> String {
-    if text.chars().count() <= max_len {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    for ch in text.chars().take(max_len.saturating_sub(3)) {
-        out.push(ch);
-    }
-    out.push_str("...");
-    out
 }
 
 fn truncate_text_to_width(text: &str, max_width: usize) -> String {
@@ -5073,6 +5061,20 @@ mod tests {
     }
 
     #[test]
+    fn summarize_tool_output_truncates_raw_text_by_display_width() {
+        let summary = super::summarize_tool_output(&"\u{8f93}\u{51fa}".repeat(180));
+
+        assert!(
+            UnicodeWidthStr::width(summary.as_str()) <= super::TOOL_TEXT_LIMIT,
+            "raw tool output summary overflowed display width: {summary:?}"
+        );
+        assert!(
+            summary.contains(history_ellipsis()),
+            "raw tool output summary should expose truncation: {summary:?}"
+        );
+    }
+
+    #[test]
     fn generic_tool_cell_picks_family_from_tool_name() {
         let cell = GenericToolCell {
             name: "agent_spawn".to_string(),
@@ -5583,6 +5585,26 @@ mod tests {
         assert!(
             !text.contains("args: prompts:"),
             "inline `args:` summary must be suppressed when per-prompt rows render"
+        );
+    }
+
+    #[test]
+    fn generic_tool_cell_truncates_prompt_rows_by_display_width() {
+        let cell = HistoryCell::Tool(ToolCell::Generic(GenericToolCell {
+            name: "future_fanout_tool".to_string(),
+            status: ToolStatus::Running,
+            input_summary: Some("prompts: <1 items>".to_string()),
+            output: None,
+            prompts: Some(vec!["\u{4efb}\u{52a1}".repeat(120)]),
+            spillover_path: None,
+            output_summary: None,
+            is_diff: false,
+        }));
+        let text = lines_text(&cell.lines(240));
+
+        assert!(
+            text.contains(history_ellipsis()),
+            "long wide prompt row should expose truncation: {text:?}"
         );
     }
 
