@@ -64,8 +64,14 @@ fn fanout_counts_text(
         .replace("{running}", &running.to_string())
         .replace("{failed}", &failed.to_string())
         .replace("{pending}", &pending.to_string());
+    fanout_counts_text_with_ascii_fallback(text)
+}
+
+fn fanout_counts_text_with_ascii_fallback(text: impl Into<String>) -> String {
+    let text = text.into();
     if palette::ascii_ui_enabled() {
-        text.replace('\u{00B7}', "|")
+        let text = text.replace('\u{00B7}', "|");
+        crate::commands::command_text_with_ascii_fallback(text)
     } else {
         text
     }
@@ -864,6 +870,18 @@ mod tests {
                 text,
                 "1 done \u{00B7} 2 running \u{00B7} 3 failed \u{00B7} 4 pending"
             );
+        }
+    }
+
+    #[test]
+    fn fanout_counts_text_reuses_ascii_command_fallback() {
+        let text = fanout_counts_text_with_ascii_fallback(
+            "1 done \u{00B7} 2 running \u{2013} done \u{2713}",
+        );
+        if palette::ascii_ui_enabled() {
+            assert_eq!(text, "1 done | 2 running - done +");
+        } else {
+            assert_eq!(text, "1 done \u{00B7} 2 running \u{2013} done \u{2713}");
         }
     }
 
