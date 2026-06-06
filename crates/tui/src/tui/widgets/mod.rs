@@ -1447,12 +1447,11 @@ impl Renderable for ApprovalWidget<'_> {
             ),
         ]));
 
-        let title = format!(
-            " {} {} {} {} ",
-            risk_badge_text(risk, locale),
-            approval_word(locale),
-            widget_title_separator(),
-            self.request.tool_name
+        let title = approval_card_title(
+            risk,
+            locale,
+            &self.request.tool_name,
+            card_area.width.saturating_sub(4) as usize,
         );
         let block = widget_block_border(
             Block::default()
@@ -1603,6 +1602,22 @@ fn approval_word(locale: Locale) -> &'static str {
         Locale::ZhHans => "审批",
         _ => "approval",
     }
+}
+
+fn approval_card_title(
+    risk: RiskLevel,
+    locale: Locale,
+    tool_name: &str,
+    max_width: usize,
+) -> String {
+    let title = format!(
+        " {} {} {} {} ",
+        risk_badge_text(risk, locale),
+        approval_word(locale),
+        widget_title_separator(),
+        tool_name
+    );
+    truncate_display_width(&title, max_width)
 }
 
 fn label_type(locale: Locale) -> &'static str {
@@ -3620,6 +3635,22 @@ mod tests {
         assert_eq!(
             footer_controls_for_ascii(Locale::ZhHans, false),
             "  \u{00B7}  v：完整参数  \u{00B7}  Esc：终止"
+        );
+    }
+
+    #[test]
+    fn approval_card_title_truncates_tool_name_to_display_width() {
+        let title = approval_card_title(
+            RiskLevel::Destructive,
+            Locale::En,
+            &"\u{5de5}\u{5177}\u{540d}\u{79f0}".repeat(12),
+            24,
+        );
+
+        assert!(UnicodeWidthStr::width(title.as_str()) <= 24);
+        assert!(
+            title.is_char_boundary(title.len()),
+            "approval title must not split UTF-8 codepoints: {title:?}"
         );
     }
 
