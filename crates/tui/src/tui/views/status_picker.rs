@@ -419,7 +419,11 @@ fn status_pointer_for_ascii(active: bool, ascii: bool) -> &'static str {
 }
 
 fn status_row_text(pointer: &str, mark: &str, item: &StatusItem, width: usize) -> String {
-    let text = format!(" {pointer} {mark} {}  ({})", item.label(), item.hint());
+    let text = crate::commands::command_text_with_ascii_fallback(format!(
+        " {pointer} {mark} {}  ({})",
+        item.label(),
+        item.hint()
+    ));
     let mut text = truncate_to_width(&text, width);
     let current_width = text.width();
     if current_width < width {
@@ -431,6 +435,7 @@ fn status_row_text(pointer: &str, mark: &str, item: &StatusItem, width: usize) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVarGuard;
     use unicode_width::UnicodeWidthStr;
 
     #[test]
@@ -549,6 +554,22 @@ mod tests {
         assert_eq!(status_pointer_for_ascii(false, true), " ");
         assert_eq!(status_mark_for_ascii(true, false), "[\u{2713}]");
         assert_eq!(status_pointer_for_ascii(true, false), "\u{25B8}");
+    }
+
+    #[test]
+    fn status_row_text_applies_ascii_fallback_to_hint_text() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let text = status_row_text(
+            status_pointer_for_ascii(true, true),
+            status_mark_for_ascii(true, true),
+            &StatusItem::Mode,
+            40,
+        );
+
+        assert!(text.contains("agent - yolo - plan"), "got: {text}");
+        assert!(!text.contains('\u{00B7}'));
     }
 
     #[test]
