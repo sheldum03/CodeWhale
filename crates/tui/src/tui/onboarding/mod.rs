@@ -60,24 +60,22 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             )
         } else {
             let mut panel = Block::default()
-                .title(Line::from(Span::styled(
+                .title(onboarding_panel_title_line(
                     " CodeWhale ",
-                    Style::default()
-                        .fg(app.ui_theme.accent_primary)
-                        .add_modifier(Modifier::BOLD),
-                )))
+                    content_area.width.saturating_sub(4) as usize,
+                    app.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.ui_theme.border))
                 .style(Style::default().bg(app.ui_theme.panel_bg))
                 .padding(Padding::new(2, 2, 1, 1));
             if !app.onboarding_workspace_trust_gate {
                 let (step, total) = onboarding_step(app);
-                panel = panel.title_bottom(Line::from(Span::styled(
-                    format!(" Step {step}/{total} "),
-                    Style::default()
-                        .fg(app.ui_theme.text_muted)
-                        .add_modifier(Modifier::BOLD),
-                )));
+                panel = panel.title_bottom(onboarding_panel_footer_line(
+                    &format!(" Step {step}/{total} "),
+                    content_area.width.saturating_sub(4) as usize,
+                    app.ui_theme,
+                ));
             }
             let inner = panel.inner(content_area);
             f.render_widget(panel, content_area);
@@ -86,6 +84,24 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(paragraph, inner);
     }
+}
+
+fn onboarding_panel_title_line(title: &str, max_width: usize, ui_theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(title, max_width),
+        Style::default()
+            .fg(ui_theme.accent_primary)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn onboarding_panel_footer_line(footer: &str, max_width: usize, ui_theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default()
+            .fg(ui_theme.text_muted)
+            .add_modifier(Modifier::BOLD),
+    ))
 }
 
 fn render_ascii_onboarding_panel(
@@ -420,6 +436,46 @@ mod tests {
         assert!(
             prefix.is_char_boundary(prefix.len()),
             "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn onboarding_panel_title_line_truncates_to_display_width() {
+        let line = onboarding_panel_title_line(
+            &format!(" {} ", "\u{6b22}\u{8fce}\u{5411}\u{5bfc}".repeat(8)),
+            14,
+            crate::palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 14);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "onboarding title must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn onboarding_panel_footer_line_truncates_to_display_width() {
+        let line = onboarding_panel_footer_line(
+            &format!(" Step 12/34 {} ", "\u{6b65}\u{9aa4}".repeat(8)),
+            16,
+            crate::palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 16);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "onboarding footer must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
