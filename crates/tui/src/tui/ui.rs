@@ -257,7 +257,7 @@ const SIDEBAR_VISIBLE_MIN_WIDTH: u16 = 100;
 const DEFAULT_TERMINAL_PROBE_TIMEOUT_MS: u64 = 500;
 const PERIODIC_FULL_REPAINT_EVERY_N: u64 = 50;
 const TURN_META_PREFIX: &str = "<turn_meta>";
-const SESSION_TITLE_MAX_CHARS: usize = 32;
+const SESSION_TITLE_MAX_WIDTH: usize = 32;
 const VERSION_HINT_TOAST_TTL_MS: u64 = 12_000;
 
 const REQUIRED_RELEASE_ASSETS: &[&str] = &[
@@ -8002,7 +8002,7 @@ fn apply_loaded_session(app: &mut App, config: &Config, session: &SavedSession) 
 
 /// Derive a short display title from the API message list.
 /// Skips the `<turn_meta>` block prepended by the engine and takes the first
-/// real user-text block, truncated to 32 characters.
+/// real user-text block, truncated to 32 terminal columns.
 fn derive_session_title(messages: &[Message]) -> Option<String> {
     messages.iter().find(|m| m.role == "user").and_then(|m| {
         m.content.iter().find_map(|block| match block {
@@ -8011,13 +8011,7 @@ fn derive_session_title(messages: &[Message]) -> Option<String> {
                 if first_line.is_empty() {
                     return None;
                 }
-                let char_count = first_line.chars().count();
-                let chars: String = first_line.chars().take(SESSION_TITLE_MAX_CHARS).collect();
-                if char_count > SESSION_TITLE_MAX_CHARS {
-                    Some(format!("{chars}{}", ui_ellipsis()))
-                } else {
-                    Some(chars)
-                }
+                Some(truncate_line_to_width(first_line, SESSION_TITLE_MAX_WIDTH))
             }
             _ => None,
         })

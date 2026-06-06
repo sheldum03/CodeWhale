@@ -1600,6 +1600,15 @@ fn text_message(role: &str, text: &str) -> Message {
     }
 }
 
+#[test]
+fn derived_session_title_truncates_by_display_width() {
+    let title =
+        derive_session_title(&[text_message("user", &"界".repeat(40))]).expect("session title");
+
+    assert!(UnicodeWidthStr::width(title.as_str()) <= SESSION_TITLE_MAX_WIDTH);
+    assert!(title.ends_with(ui_ellipsis()));
+}
+
 fn saved_session_with_messages(messages: Vec<Message>) -> SavedSession {
     SavedSession {
         schema_version: 1,
