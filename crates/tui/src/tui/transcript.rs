@@ -560,7 +560,8 @@ fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_width: usize) -> Vec<S
     }
 
     let ellipsis = if max_width > 3 { "..." } else { "" };
-    let content_budget = max_width.saturating_sub(ellipsis.len());
+    let ellipsis_width = unicode_width::UnicodeWidthStr::width(ellipsis);
+    let content_budget = max_width.saturating_sub(ellipsis_width);
     let mut used = 0usize;
     let mut truncated = Vec::with_capacity(spans.len() + usize::from(!ellipsis.is_empty()));
     let mut last_style = Style::default();
@@ -651,6 +652,28 @@ mod tests {
         assert_eq!(
             plain_lines(&cache)[0].trim_end(),
             format!("{expected_glyph} # literal user prompt")
+        );
+    }
+
+    #[test]
+    fn truncate_spans_to_width_respects_cjk_display_width() {
+        let spans = vec![
+            Span::raw("alpha "),
+            Span::styled("路径路径路径 omega", Style::default()),
+        ];
+        let truncated = truncate_spans_to_width(spans, 12);
+        let visible = truncated
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(
+            unicode_width::UnicodeWidthStr::width(visible.as_str()) <= 12,
+            "truncated transcript line overflowed display width: {visible:?}"
+        );
+        assert!(
+            visible.ends_with("..."),
+            "truncated transcript line should expose ellipsis: {visible:?}"
         );
     }
 
