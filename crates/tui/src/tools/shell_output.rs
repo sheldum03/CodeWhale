@@ -1,5 +1,7 @@
 //! Output truncation and summarization helpers for shell tools.
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 /// Maximum output size before truncation (30KB like Claude Code).
 const MAX_OUTPUT_SIZE: usize = 30_000;
 /// Head bytes preserved for large shell/test output. The matching tail budget
@@ -179,19 +181,29 @@ fn strip_truncation_note(text: &str) -> &str {
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(text) <= max_chars {
         return text.to_string();
     }
 
-    let mut end = text.len();
-    for (count, (idx, _)) in text.char_indices().enumerate() {
-        if count == max_chars {
-            end = idx;
-            break;
-        }
+    if max_chars < 3 {
+        return take_display_width(text, max_chars);
     }
 
-    format!("{}...", &text[..end])
+    format!("{}...", take_display_width(text, max_chars - 3))
+}
+
+fn take_display_width(text: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 pub(crate) fn summarize_output(text: &str) -> String {
@@ -295,5 +307,14 @@ note: see help
         let preserved = collect_summary_lines(body);
         assert!(preserved.iter().any(|line| line.contains("error[E0277]")));
         assert!(preserved.iter().any(|line| line.contains("warning:")));
+    }
+
+    #[test]
+    fn summarize_output_truncates_cjk_by_display_width() {
+        let summary = summarize_output(&"命令输出".repeat(100));
+
+        assert!(UnicodeWidthStr::width(summary.as_str()) <= SUMMARY_MAX_CHARS);
+        assert!(summary.ends_with("..."));
+        assert!(summary.chars().count() < SUMMARY_MAX_CHARS);
     }
 }
