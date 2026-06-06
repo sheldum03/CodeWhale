@@ -210,8 +210,12 @@ impl ModalView for ContextMenuView {
         let inner_area = if palette::ascii_ui_enabled() {
             render_ascii_context_menu_chrome(menu_area, buf, self.title.as_str(), self.ui_theme)
         } else {
+            let title = trim_to_width(
+                self.title.as_str(),
+                menu_area.width.saturating_sub(4) as usize,
+            );
             let block = Block::default()
-                .title(self.title.as_str())
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default().bg(self.ui_theme.elevated_bg))
@@ -443,6 +447,38 @@ mod tests {
             .expect("selected entry should render");
         assert_eq!(selected_cell.bg, theme.selection_bg);
         assert_eq!(selected_cell.fg, theme.selection_text);
+    }
+
+    #[test]
+    fn context_menu_title_truncates_to_menu_width() {
+        let title = format!(" {} ", "\u{4f1a}\u{8bdd}\u{5217}\u{8868}".repeat(12));
+        let view = ContextMenuView::new(
+            vec![entry("Paste", ContextMenuAction::Paste)],
+            1,
+            1,
+            title,
+        )
+        .with_ui_theme(palette::DEEPSEEK_SHELL_UI_THEME);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 28,
+            height: 8,
+        };
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+        let menu = view.last_rect.get().expect("menu rect should be tracked");
+        let mut title_row = String::new();
+        for x in menu.left()..menu.right() {
+            title_row.push_str(buf[(x, menu.y)].symbol());
+        }
+
+        assert!(UnicodeWidthStr::width(title_row.as_str()) <= usize::from(menu.width));
+        assert!(
+            title_row.is_char_boundary(title_row.len()),
+            "context menu title must not split UTF-8 codepoints: {title_row:?}"
+        );
     }
 
     #[test]
