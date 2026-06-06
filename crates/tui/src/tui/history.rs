@@ -1656,8 +1656,10 @@ impl GenericToolCell {
 fn render_spillover_annotation(path: &std::path::Path, width: u16) -> Line<'static> {
     let display = path.display().to_string();
     let prefix = "  full output: ";
-    let budget = usize::from(width).saturating_sub(prefix.len()).max(8);
-    let truncated = truncate_text(&display, budget);
+    let budget = usize::from(width)
+        .saturating_sub(UnicodeWidthStr::width(prefix))
+        .max(8);
+    let truncated = truncate_text_to_width(&display, budget);
     let muted = active_theme().text_muted_color;
     Line::from(vec![
         Span::styled(prefix, Style::default().fg(muted)),
@@ -3879,7 +3881,7 @@ mod tests {
     #[test]
     fn render_spillover_annotation_truncates_to_width() {
         use std::path::PathBuf;
-        let long_path = "/Users/dev/.deepseek/tool_outputs/this-is-a-very-long-tool-call-id-that-will-not-fit-in-narrow-widths.txt";
+        let long_path = "/Users/dev/.deepseek/tool_outputs/宽路径/this-is-a-very-long-tool-call-id-that-will-not-fit-in-narrow-widths.txt";
         let cell = GenericToolCell {
             name: "exec_shell".to_string(),
             status: ToolStatus::Success,
@@ -3904,13 +3906,14 @@ mod tests {
             .iter()
             .map(|s| s.content.as_ref())
             .collect();
-        // Width budget is 40; annotation line should be at most ~40 chars.
-        // (Some slack for the prefix; the truncate_text ellipsis costs
-        // 3 cols.)
         assert!(
-            rendered.chars().count() <= 60,
-            "annotation overflowed at width 40: {} chars: {rendered:?}",
-            rendered.chars().count()
+            UnicodeWidthStr::width(rendered.as_str()) <= 40,
+            "annotation overflowed at width 40: {} columns: {rendered:?}",
+            UnicodeWidthStr::width(rendered.as_str())
+        );
+        assert!(
+            rendered.contains(history_ellipsis()),
+            "annotation should visibly truncate long spillover paths: {rendered:?}"
         );
     }
 
