@@ -204,12 +204,8 @@ fn cycle_boundary_text(content: &str) -> String {
     if !ascii_history_ui_enabled() {
         return content.to_string();
     }
-    content
-        .replace('\u{2192}', "->")
-        .replace('\u{2190}', "<-")
-        .replace('\u{2014}', "-")
-        .replace('\u{00B7}', "|")
-        .replace('\u{2500}', "-")
+    let content = content.replace('\u{00B7}', "|");
+    crate::commands::command_text_with_ascii_fallback(content)
 }
 
 // === History Cells ===
@@ -4512,8 +4508,8 @@ mod tests {
             assert_eq!(history_change_arrow(), " -> ");
             assert_eq!(cycle_boundary_rule_char(), '-');
             assert_eq!(
-                cycle_boundary_text("\u{2500}\u{2500}\u{2500} cycle 0 \u{2192} 1 \u{2014} warm \u{00B7} hot"),
-                "--- cycle 0 -> 1 - warm | hot"
+                cycle_boundary_text("\u{2500}\u{2500}\u{2500} cycle 0 \u{2192} 1 \u{2014} warm \u{00B7} hot \u{2013} done \u{2713}"),
+                "--- cycle 0 -> 1 - warm | hot - done +"
             );
         } else {
             assert_eq!(history_separator(), " · ");
