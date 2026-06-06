@@ -1341,8 +1341,7 @@ impl Renderable for ApprovalWidget<'_> {
 
         // Intent summary — the model's explanation of why this change is needed (#2381).
         if let Some(ref summary) = self.request.intent_summary {
-            let max_width = card_area.width.saturating_sub(14) as usize;
-            if max_width > 0 {
+            if approval_content_width > 0 {
                 lines.push(Line::from(""));
                 let intent_label = match locale {
                     Locale::ZhHans => "意图：",
@@ -1351,31 +1350,33 @@ impl Renderable for ApprovalWidget<'_> {
                 let summary_lines: Vec<&str> = summary.lines().collect();
                 for (i, sline) in summary_lines.iter().take(3).enumerate() {
                     let prefix = if i == 0 { intent_label } else { "  " };
-                    let truncated = truncate_display_width(sline, max_width);
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(
-                            prefix,
-                            if i == 0 {
-                                Style::default().fg(self.ui_theme.text_hint)
-                            } else {
-                                Style::default()
-                            },
-                        ),
-                        Span::styled(truncated, Style::default().fg(self.ui_theme.text_muted)),
-                    ]));
+                    let prefix_style = if i == 0 {
+                        Style::default().fg(self.ui_theme.text_hint)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(approval_labeled_line(
+                        "  ",
+                        prefix,
+                        sline,
+                        prefix_style,
+                        Style::default().fg(self.ui_theme.text_muted),
+                        approval_content_width,
+                    ));
                 }
                 if summary_lines.len() > 3 {
                     let more = match locale {
                         Locale::ZhHans => {
-                            format!("  {} (还有 {} 行)", widget_ellipsis(), summary_lines.len() - 3)
+                            format!("{} (还有 {} 行)", widget_ellipsis(), summary_lines.len() - 3)
                         }
-                        _ => format!("  {} (+{} lines)", widget_ellipsis(), summary_lines.len() - 3),
+                        _ => format!("{} (+{} lines)", widget_ellipsis(), summary_lines.len() - 3),
                     };
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(more, Style::default().fg(self.ui_theme.text_hint)),
-                    ]));
+                    lines.push(approval_text_line(
+                        "  ",
+                        &more,
+                        Style::default().fg(self.ui_theme.text_hint),
+                        approval_content_width,
+                    ));
                 }
             }
         }
@@ -1633,6 +1634,21 @@ fn approval_labeled_line(
         Span::styled(
             truncate_display_width(value, max_width.saturating_sub(used_width)),
             value_style,
+        ),
+    ])
+}
+
+fn approval_text_line(
+    prefix: &'static str,
+    text: &str,
+    style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(
+            truncate_display_width(text, max_width.saturating_sub(UnicodeWidthStr::width(prefix))),
+            style,
         ),
     ])
 }
@@ -3857,6 +3873,27 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "approval localized line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn approval_text_line_truncates_to_display_width() {
+        let line = approval_text_line(
+            "  ",
+            &"\u{8fd8}\u{6709}\u{66f4}\u{591a}\u{884c}".repeat(12),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval text line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
