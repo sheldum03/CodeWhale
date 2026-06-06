@@ -1385,19 +1385,14 @@ impl Renderable for ApprovalWidget<'_> {
 
         lines.push(Line::from(""));
         let params_str = self.request.params_display();
-        let params_width = card_area.width.saturating_sub(14) as usize;
-        let params_truncated = truncate_display_width(&params_str, params_width.max(20));
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                label_params(locale),
-                Style::default().fg(self.ui_theme.text_hint),
-            ),
-            Span::styled(
-                params_truncated,
-                Style::default().fg(self.ui_theme.text_muted),
-            ),
-        ]));
+        lines.push(approval_labeled_line(
+            "  ",
+            label_params(locale),
+            &params_str,
+            Style::default().fg(self.ui_theme.text_hint),
+            Style::default().fg(self.ui_theme.text_muted),
+            card_area.width.saturating_sub(4) as usize,
+        ));
 
         lines.push(Line::from(""));
 
@@ -1618,6 +1613,25 @@ fn approval_card_title(
         tool_name
     );
     truncate_display_width(&title, max_width)
+}
+
+fn approval_labeled_line(
+    prefix: &'static str,
+    label: &'static str,
+    value: &str,
+    label_style: Style,
+    value_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let used_width = UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(label);
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(label, label_style),
+        Span::styled(
+            truncate_display_width(value, max_width.saturating_sub(used_width)),
+            value_style,
+        ),
+    ])
 }
 
 fn elevation_labeled_line(
@@ -3705,6 +3719,29 @@ mod tests {
         assert!(
             title.is_char_boundary(title.len()),
             "approval title must not split UTF-8 codepoints: {title:?}"
+        );
+    }
+
+    #[test]
+    fn approval_labeled_line_truncates_value_to_display_width() {
+        let line = approval_labeled_line(
+            "  ",
+            "Params: ",
+            &"\u{53c2}\u{6570}\u{503c}".repeat(12),
+            Style::default(),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval labeled line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
