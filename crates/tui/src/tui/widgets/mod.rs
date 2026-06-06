@@ -1354,7 +1354,7 @@ impl Renderable for ApprovalWidget<'_> {
                 let summary_lines: Vec<&str> = summary.lines().collect();
                 for (i, sline) in summary_lines.iter().take(3).enumerate() {
                     let prefix = if i == 0 { intent_label } else { "  " };
-                    let truncated = crate::utils::truncate_with_ellipsis(sline, max_width, "...");
+                    let truncated = truncate_display_width(sline, max_width);
                     lines.push(Line::from(vec![
                         Span::raw("  "),
                         Span::styled(
@@ -1386,8 +1386,7 @@ impl Renderable for ApprovalWidget<'_> {
         lines.push(Line::from(""));
         let params_str = self.request.params_display();
         let params_width = card_area.width.saturating_sub(14) as usize;
-        let params_truncated =
-            crate::utils::truncate_with_ellipsis(&params_str, params_width.max(20), "...");
+        let params_truncated = truncate_display_width(&params_str, params_width.max(20));
         lines.push(Line::from(vec![
             Span::raw("  "),
             Span::styled(
@@ -1775,7 +1774,7 @@ impl Renderable for ElevationWidget<'_> {
 
         // Show command if it's a shell command
         if let Some(ref command) = self.request.command {
-            let cmd_display = crate::utils::truncate_with_ellipsis(command, 45, "...");
+            let cmd_display = truncate_display_width(command, 45);
             lines.push(Line::from(vec![
                 Span::raw("  Cmd:  "),
                 Span::styled(cmd_display, Style::default().fg(self.ui_theme.text_muted)),
