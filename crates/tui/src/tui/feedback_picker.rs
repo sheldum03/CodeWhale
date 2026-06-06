@@ -199,15 +199,49 @@ impl ModalView for FeedbackPickerView {
             };
             let pointer = if is_selected { ">" } else { " " };
 
+            let row = feedback_row_text(pointer, option, usize::from(inner.width));
             lines.push(Line::from(vec![
-                Span::styled(format!(" {pointer} {}. ", option.number), row_style),
-                Span::styled(option.label, row_style),
-                Span::raw("    "),
-                Span::styled(option.description, desc_style),
+                Span::styled(row.prefix, row_style),
+                Span::styled(row.label, row_style),
+                Span::styled(row.gap, row_style),
+                Span::styled(row.description, desc_style),
             ]));
         }
 
         Paragraph::new(lines).render(inner, buf);
+    }
+}
+
+struct FeedbackRowText {
+    prefix: String,
+    label: String,
+    gap: String,
+    description: String,
+}
+
+fn feedback_row_text(pointer: &str, option: &FeedbackOption, width: usize) -> FeedbackRowText {
+    let prefix = format!(" {pointer} {}. ", option.number);
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str());
+    let content_width = width.saturating_sub(prefix_width);
+    let label_width = UnicodeWidthStr::width(option.label);
+
+    if content_width <= label_width {
+        return FeedbackRowText {
+            prefix,
+            label: fit_text(option.label, content_width),
+            gap: String::new(),
+            description: String::new(),
+        };
+    }
+
+    let gap_width = 4usize.min(content_width.saturating_sub(label_width));
+    let description_width = content_width.saturating_sub(label_width + gap_width);
+
+    FeedbackRowText {
+        prefix,
+        label: option.label.to_string(),
+        gap: " ".repeat(gap_width),
+        description: fit_text(option.description, description_width),
     }
 }
 
@@ -309,6 +343,32 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
     out
 }
 
+fn fit_text(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(3);
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str("...");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +449,45 @@ mod tests {
         assert!(
             prefix.is_char_boundary(prefix.len()),
             "prefix must not split UTF-8 codepoints: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn feedback_row_text_fits_available_width() {
+        let option = FeedbackOption {
+            number: '9',
+            label: "Extremely long feedback destination",
+            description: "A very long description that should not overflow the picker",
+            command: "/feedback test",
+        };
+        let row = feedback_row_text(">", &option, 24);
+        let rendered = format!(
+            "{}{}{}{}",
+            row.prefix, row.label, row.gap, row.description
+        );
+
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 24);
+        assert!(rendered.contains("..."));
+    }
+
+    #[test]
+    fn feedback_row_text_handles_cjk_display_width() {
+        let option = FeedbackOption {
+            number: '9',
+            label: "界界界界界界界界界界界界",
+            description: "说明说明说明说明说明说明说明说明",
+            command: "/feedback test",
+        };
+        let row = feedback_row_text(">", &option, 18);
+        let rendered = format!(
+            "{}{}{}{}",
+            row.prefix, row.label, row.gap, row.description
+        );
+
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 18);
+        assert!(
+            rendered.is_char_boundary(rendered.len()),
+            "row must not split UTF-8 codepoints: {rendered:?}"
         );
     }
 
