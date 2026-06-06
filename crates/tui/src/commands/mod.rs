@@ -1301,6 +1301,23 @@ mod tests {
     }
 
     #[test]
+    fn command_result_action_messages_apply_ascii_fallback() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let result = CommandResult::with_message_and_action(
+            "✓ routed · old → new …",
+            AppAction::OpenThemePicker,
+        );
+
+        assert_eq!(
+            result.message.as_deref(),
+            Some("+ routed - old -> new ...")
+        );
+        assert!(matches!(result.action, Some(AppAction::OpenThemePicker)));
+    }
+
+    #[test]
     fn links_command_has_dashboard_and_api_aliases() {
         let links = COMMANDS
             .iter()
