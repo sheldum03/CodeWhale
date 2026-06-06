@@ -133,12 +133,7 @@ struct WebSearchResponse {
 pub struct WebSearchTool;
 
 fn web_search_error_text(text: impl Into<String>) -> String {
-    let text = text.into();
-    if crate::palette::ascii_ui_enabled() {
-        text.replace('\u{2014}', "-")
-    } else {
-        text
-    }
+    crate::commands::command_text_with_ascii_fallback(text)
 }
 
 #[async_trait]
@@ -1751,8 +1746,8 @@ mod tests {
         let _lock = lock_test_env();
         let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
         assert_eq!(
-            web_search_error_text("Baidu search failed — bad token"),
-            "Baidu search failed - bad token"
+            web_search_error_text("Baidu search failed — bad token – retry ✓"),
+            "Baidu search failed - bad token - retry +"
         );
     }
 
