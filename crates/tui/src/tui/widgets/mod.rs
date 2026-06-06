@@ -1286,6 +1286,7 @@ impl Renderable for ApprovalWidget<'_> {
         let locale = self.view.locale();
         let palette_colors = approval_palette(risk, &self.ui_theme);
         let mut lines: Vec<Line<'static>> = Vec::with_capacity(20);
+        let approval_content_width = card_area.width.saturating_sub(4) as usize;
 
         // Header: stakes badge + tool identifier. The badge is the
         // first thing the eye lands on.
@@ -1306,19 +1307,18 @@ impl Renderable for ApprovalWidget<'_> {
         // Category line — English remains the baseline while localized
         // sessions get the same risk category in their UI language.
         let (cat_label, cat_color) = category_label_for(self.request.category, locale, &self.ui_theme);
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(label_type(locale), Style::default().fg(self.ui_theme.text_hint)),
-            Span::styled(
-                cat_label,
-                Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(approval_labeled_line(
+            "  ",
+            label_type(locale),
+            cat_label,
+            Style::default().fg(self.ui_theme.text_hint),
+            Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
+            approval_content_width,
+        ));
 
         lines.push(Line::from(""));
         // About + impacts. Impact lines are the load-bearing content;
         // they tell the user what will happen.
-        let approval_content_width = card_area.width.saturating_sub(4) as usize;
         let description = self.request.description_for_locale(locale);
         lines.push(approval_labeled_line(
             "  ",
