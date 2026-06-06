@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::spec::{
     ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec, optional_str, optional_u64,
@@ -655,11 +656,23 @@ fn truncate_text(text: &str, max_bytes: usize) -> String {
 }
 
 fn truncate_line(line: &str, max_chars: usize) -> String {
-    if line.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(line) <= max_chars {
         return line.to_string();
     }
-    let mut out: String = line.chars().take(max_chars.saturating_sub(3)).collect();
-    out.push_str("...");
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = max_chars.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in line.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > content_width {
+            break;
+        }
+        out.push(ch);
+        used += ch_width;
+    }
+    out.push_str(ellipsis);
     out
 }
 
@@ -705,6 +718,18 @@ mod tests {
             .build()
             .unwrap();
         runtime.block_on(RetrieveToolResultTool.execute(input, &context()))
+    }
+
+    #[test]
+    fn truncate_line_respects_cjk_display_width() {
+        let line = "\u{7ed3}\u{679c}".repeat(200);
+        let truncated = truncate_line(&line, 300);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 300,
+            "retrieved result line overflowed display width: {truncated:?}"
+        );
+        assert!(truncated.ends_with("..."));
     }
 
     #[test]
