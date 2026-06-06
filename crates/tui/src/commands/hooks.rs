@@ -8,6 +8,7 @@
 
 use crate::hooks::HookEvent;
 use crate::tui::app::App;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::{CommandResult, command_ellipsis, command_text_separator};
 
@@ -186,21 +187,29 @@ fn condition_summary(condition: &crate::hooks::HookCondition) -> String {
     }
 }
 
-/// Single-line preview of the shell command, capped at `max_chars`.
-fn preview_command(command: &str, max_chars: usize) -> String {
+/// Single-line preview of the shell command, capped at display width.
+fn preview_command(command: &str, max_width: usize) -> String {
     let single_line: String = command.chars().filter(|c| *c != '\n').collect();
-    if single_line.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(single_line.as_str()) <= max_width {
         return single_line;
     }
     let marker = command_ellipsis();
-    let marker_len = marker.chars().count();
-    if max_chars <= marker_len {
-        return marker.chars().take(max_chars).collect();
+    let marker_width = UnicodeWidthStr::width(marker);
+    if max_width <= marker_width {
+        return ".".repeat(max_width);
     }
-    let mut out: String = single_line
-        .chars()
-        .take(max_chars.saturating_sub(marker_len))
-        .collect();
+
+    let content_width = max_width.saturating_sub(marker_width);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in single_line.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > content_width {
+            break;
+        }
+        out.push(ch);
+        used += ch_width;
+    }
     out.push_str(marker);
     out
 }
@@ -216,6 +225,18 @@ mod tests {
         let cmd = "x".repeat(200);
         assert_eq!(preview_command(&cmd, 10).chars().count(), 10);
         assert!(preview_command(&cmd, 10).ends_with(command_ellipsis()));
+    }
+
+    #[test]
+    fn preview_command_truncates_cjk_to_display_width() {
+        let cmd = "\u{6267}\u{884c}".repeat(20);
+        let preview = preview_command(&cmd, 10);
+
+        assert!(
+            UnicodeWidthStr::width(preview.as_str()) <= 10,
+            "preview overflowed display width: {preview:?}"
+        );
+        assert!(preview.ends_with(command_ellipsis()));
     }
 
     #[test]
