@@ -286,7 +286,11 @@ impl ProviderPickerView {
     fn render_key_entry(&self, area: Rect, buf: &mut Buffer) {
         let provider = self.selected_provider();
         let inner = if palette::ascii_ui_enabled() {
-            let title = format!(" API key - {} ", provider.display_name());
+            let title = provider_key_title(
+                provider.display_name(),
+                true,
+                area.width.saturating_sub(4) as usize,
+            );
             render_ascii_provider_picker_chrome(
                 area,
                 buf,
@@ -295,9 +299,14 @@ impl ProviderPickerView {
                 self.ui_theme,
             )
         } else {
+            let title = provider_key_title(
+                provider.display_name(),
+                false,
+                area.width.saturating_sub(4) as usize,
+            );
             let outer = Block::default()
                 .title(Line::from(Span::styled(
-                    format!(" API key — {} ", provider.display_name()),
+                    title,
                     Style::default()
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
@@ -411,6 +420,11 @@ fn provider_key_env_hint(env_var: &str, max_width: usize) -> String {
         &format!("Or set the {env_var} environment variable and re-open /provider."),
         max_width,
     )
+}
+
+fn provider_key_title(provider_name: &str, ascii: bool, max_width: usize) -> String {
+    let separator = if ascii { "-" } else { "\u{2014}" };
+    fit_row_text(&format!(" API key {separator} {provider_name} "), max_width)
 }
 
 struct ProviderRowText {
@@ -1051,6 +1065,21 @@ mod tests {
         assert!(
             hint.is_char_boundary(hint.len()),
             "provider env hint must not split UTF-8 codepoints: {hint:?}"
+        );
+    }
+
+    #[test]
+    fn provider_key_title_truncates_to_display_width() {
+        let title = provider_key_title(
+            &"\u{670d}\u{52a1}\u{5546}\u{540d}\u{79f0}".repeat(12),
+            false,
+            24,
+        );
+
+        assert!(UnicodeWidthStr::width(title.as_str()) <= 24);
+        assert!(
+            title.is_char_boundary(title.len()),
+            "provider key title must not split UTF-8 codepoints: {title:?}"
         );
     }
 
