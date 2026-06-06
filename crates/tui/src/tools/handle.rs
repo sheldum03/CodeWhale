@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tools::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
@@ -617,7 +618,7 @@ fn jsonpath_projection(
         "truncated": false,
     });
     let rendered = serde_json::to_string(&payload).unwrap_or_default();
-    if rendered.chars().count() > max_chars {
+    if UnicodeWidthStr::width(rendered.as_str()) > max_chars {
         payload["matches"] = json!([]);
         payload["preview"] = json!(truncate_chars(&rendered, max_chars));
         payload["truncated"] = json!(true);
@@ -752,11 +753,14 @@ fn char_slice(text: &str, start: usize, end: usize) -> String {
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     let mut out = String::new();
-    for (idx, ch) in text.chars().enumerate() {
-        if idx == max_chars {
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > max_chars {
             break;
         }
         out.push(ch);
+        width += char_width;
     }
     out
 }
@@ -806,6 +810,15 @@ mod tests {
         let body: Value = serde_json::from_str(&result.content).expect("json");
         assert_eq!(body["content"], "bcd");
         assert_eq!(body["truncated"], false);
+    }
+
+    #[test]
+    fn truncate_chars_respects_cjk_display_width() {
+        let text = "检索结果".repeat(20);
+        let truncated = truncate_chars(&text, 15);
+
+        assert!(UnicodeWidthStr::width(truncated.as_str()) <= 15);
+        assert!(truncated.chars().count() < 15);
     }
 
     #[tokio::test]
