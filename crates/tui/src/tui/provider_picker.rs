@@ -331,6 +331,7 @@ impl ProviderPickerView {
         } else {
             masked
         };
+        let display = fit_key_display(&display, layout[0].width.saturating_sub(5) as usize);
         let key_lines = vec![Line::from(vec![
             Span::styled("Key: ", Style::default().fg(self.ui_theme.text_muted)),
             Span::styled(
@@ -382,6 +383,31 @@ fn mask_key(input: &str) -> String {
         .rev()
         .collect();
     format!("{}{}", "*".repeat(len - 4), visible)
+}
+
+fn fit_key_display(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let suffix_width = max_width.saturating_sub(3);
+    let mut suffix = String::new();
+    let mut width = 0usize;
+    for ch in text.chars().rev() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > suffix_width {
+            break;
+        }
+        suffix.insert(0, ch);
+        width += ch_width;
+    }
+    format!("...{suffix}")
 }
 
 fn render_ascii_provider_picker_chrome(
@@ -905,6 +931,22 @@ mod tests {
             assert_eq!(selected, ">");
         } else {
             assert_eq!(selected, "\u{25B8}");
+        }
+    }
+
+    #[test]
+    fn key_display_truncates_to_display_width_preserving_suffix() {
+        let display = fit_key_display("********************************abcd", 12);
+
+        assert!(UnicodeWidthStr::width(display.as_str()) <= 12);
+        assert_eq!(display, "...*****abcd");
+    }
+
+    #[test]
+    fn key_display_handles_tiny_widths() {
+        for width in 0..=3 {
+            let display = fit_key_display("********abcd", width);
+            assert_eq!(UnicodeWidthStr::width(display.as_str()), width);
         }
     }
 
