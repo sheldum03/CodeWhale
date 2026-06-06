@@ -528,6 +528,16 @@ impl ModalView for HelpView {
             );
             Paragraph::new(lines).render(inner, buf);
         } else {
+            let footer = help_footer_line(
+                vec![
+                    self.tr(MessageId::HelpFooterTypeFilter).to_string(),
+                    self.tr(MessageId::HelpFooterMove).to_string(),
+                    self.tr(MessageId::HelpFooterJump).to_string(),
+                    self.tr(MessageId::HelpFooterClose).to_string(),
+                ],
+                popup_area.width.saturating_sub(4) as usize,
+                self.ui_theme,
+            );
             let block = modal_block(self.ui_theme)
                 .title(Line::from(vec![Span::styled(
                     format!(" {} ", self.tr(MessageId::HelpTitle)),
@@ -535,28 +545,45 @@ impl ModalView for HelpView {
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
                 )]))
-                .title_bottom(Line::from(vec![
-                    Span::styled(
-                        self.tr(MessageId::HelpFooterTypeFilter),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::styled(
-                        self.tr(MessageId::HelpFooterMove),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::styled(
-                        self.tr(MessageId::HelpFooterJump),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::styled(
-                        self.tr(MessageId::HelpFooterClose),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                ]));
+                .title_bottom(footer);
 
             Paragraph::new(lines).block(block).render(popup_area, buf);
         }
     }
+}
+
+fn help_footer_line(parts: Vec<String>, max_width: usize, theme: UiTheme) -> Line<'static> {
+    let style = Style::default().fg(theme.text_muted);
+    let spans = parts
+        .into_iter()
+        .map(|part| Span::styled(part, style))
+        .collect::<Vec<_>>();
+    Line::from(truncate_spans_to_width(spans, max_width))
+}
+
+fn truncate_spans_to_width(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'static>> {
+    if max_width == 0 {
+        return Vec::new();
+    }
+
+    let mut remaining = max_width;
+    let mut out = Vec::with_capacity(spans.len());
+    for span in spans {
+        let content = span.content.as_ref();
+        let content_width = UnicodeWidthStr::width(content);
+        if content_width <= remaining {
+            remaining = remaining.saturating_sub(content_width);
+            out.push(span);
+            continue;
+        }
+
+        let clipped = ascii_prefix(content, remaining);
+        if !clipped.is_empty() {
+            out.push(Span::styled(clipped, span.style));
+        }
+        break;
+    }
+    out
 }
 
 fn render_ascii_help_chrome(
@@ -989,6 +1016,31 @@ mod tests {
         assert!(
             prefix.is_char_boundary(prefix.len()),
             "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn help_footer_line_truncates_to_display_width() {
+        let line = help_footer_line(
+            vec![
+                "输入以筛选 ".to_string(),
+                "上下移动 ".to_string(),
+                "PgUp/PgDn 跳转 ".to_string(),
+                "Esc 关闭 ".to_string(),
+            ],
+            18,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 18);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "footer must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
