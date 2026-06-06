@@ -23,6 +23,8 @@ use crate::session_manager::{
 };
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 
+const SESSION_PICKER_TITLE_MAX_WIDTH: usize = 100;
+
 fn modal_block(title: &str, ui_theme: UiTheme) -> Block<'static> {
     Block::default()
         .title(Line::from(vec![Span::styled(
@@ -38,6 +40,10 @@ fn modal_block(title: &str, ui_theme: UiTheme) -> Block<'static> {
 
 fn session_picker_status_text(status: &str) -> String {
     crate::commands::command_text_with_ascii_fallback(status)
+}
+
+fn valid_rename_title(title: &str) -> bool {
+    !title.is_empty() && UnicodeWidthStr::width(title) <= SESSION_PICKER_TITLE_MAX_WIDTH
 }
 
 fn render_ascii_session_picker_chrome(
@@ -423,8 +429,10 @@ impl SessionPickerView {
             self.status = Some("No session selected".to_string());
             return ViewAction::None;
         };
-        if new_title.is_empty() || new_title.len() > 100 {
-            self.status = Some("Title must be 1–100 characters".to_string());
+        if !valid_rename_title(new_title) {
+            self.status = Some(format!(
+                "Title must be 1-{SESSION_PICKER_TITLE_MAX_WIDTH} terminal columns"
+            ));
             return ViewAction::None;
         }
         let manager = match SessionManager::default_location() {
@@ -1181,6 +1189,14 @@ mod tests {
 
         assert_eq!(truncated, "\u{4f1a}\u{8bdd}...");
         assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 7);
+    }
+
+    #[test]
+    fn rename_title_limit_uses_display_width() {
+        assert!(valid_rename_title(&"a".repeat(SESSION_PICKER_TITLE_MAX_WIDTH)));
+        assert!(valid_rename_title(&"界".repeat(50)));
+        assert!(!valid_rename_title(""));
+        assert!(!valid_rename_title(&"界".repeat(51)));
     }
 
     #[allow(clippy::too_many_arguments)]
