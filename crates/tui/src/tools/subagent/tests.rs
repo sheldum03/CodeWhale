@@ -1622,6 +1622,24 @@ fn subagent_done_sentinel_flags_clipped_result() {
 }
 
 #[test]
+fn subagent_done_summary_truncates_cjk_by_display_width() {
+    let mut res = make_snapshot(SubAgentStatus::Completed);
+    res.result = Some("完成摘要".repeat(80));
+
+    let summary = summarize_subagent_result(&res);
+    assert!(unicode_width::UnicodeWidthStr::width(summary.as_str()) <= SUBAGENT_SUMMARY_PREVIEW_MAX);
+    assert!(summary.ends_with("..."));
+    assert!(summary.chars().count() < SUBAGENT_SUMMARY_PREVIEW_MAX);
+
+    let sentinel = subagent_done_sentinel("agent_big", &res);
+    let inner = sentinel
+        .trim_start_matches("<codewhale:subagent.done>")
+        .trim_end_matches("</codewhale:subagent.done>");
+    let parsed: serde_json::Value = serde_json::from_str(inner).expect("inner JSON parses");
+    assert_eq!(parsed["result_clipped"], true);
+}
+
+#[test]
 fn subagent_failed_sentinel_format_is_well_formed() {
     let sentinel = subagent_failed_sentinel("agent_zzz", "boom");
     let inner = sentinel

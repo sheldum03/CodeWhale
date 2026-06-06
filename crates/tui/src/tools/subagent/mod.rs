@@ -5265,14 +5265,12 @@ fn subagent_status_name(status: &SubAgentStatus) -> &'static str {
 const SUBAGENT_SUMMARY_PREVIEW_MAX: usize = 240;
 
 fn truncate_preview(text: &str) -> String {
-    if text.len() <= SUBAGENT_SUMMARY_PREVIEW_MAX {
+    if UnicodeWidthStr::width(text) <= SUBAGENT_SUMMARY_PREVIEW_MAX {
         text.to_string()
     } else {
         format!(
             "{}...",
-            text.chars()
-                .take(SUBAGENT_SUMMARY_PREVIEW_MAX)
-                .collect::<String>()
+            take_display_width(text, SUBAGENT_SUMMARY_PREVIEW_MAX.saturating_sub(3))
         )
     }
 }
@@ -5285,7 +5283,7 @@ fn subagent_result_clipped(res: &SubAgentResult) -> bool {
         && res
             .result
             .as_deref()
-            .is_some_and(|text| text.len() > SUBAGENT_SUMMARY_PREVIEW_MAX)
+            .is_some_and(|text| UnicodeWidthStr::width(text) > SUBAGENT_SUMMARY_PREVIEW_MAX)
 }
 
 const SUBAGENT_OUTPUT_FORMAT: &str = include_str!("../../prompts/subagent_output_format.md");
