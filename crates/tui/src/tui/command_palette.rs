@@ -485,6 +485,13 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
         .collect()
 }
 
+fn command_palette_footer_line(footer: &str, max_width: usize, theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default().fg(theme.text_muted),
+    ))
+}
+
 fn parse_section_term(term: &str) -> Option<(PaletteSection, String)> {
     let (section, query) = term.split_once(':')?;
 
@@ -961,17 +968,11 @@ impl ModalView for CommandPaletteView {
         } else {
             let block = modal_block(self.ui_theme)
                 .title(" Command Palette ")
-                .title_bottom(Line::from(vec![
-                    Span::styled(
-                        command_palette_move_hint(),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::styled(
-                        "Enter run/open  ",
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::styled("Esc close", Style::default().fg(self.ui_theme.text_muted)),
-                ]));
+                .title_bottom(command_palette_footer_line(
+                    &format!("{}Enter run/open  Esc close", command_palette_move_hint()),
+                    popup_area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ));
             let inner = block.inner(popup_area);
             block.render(popup_area, buf);
             inner
@@ -983,6 +984,7 @@ impl ModalView for CommandPaletteView {
         } else {
             format!("Filter: {}", self.query)
         };
+        let query_label = truncate_to_width(&query_label, content_area.width as usize);
         lines.push(Line::from(Span::styled(
             query_label,
             Style::default().fg(self.ui_theme.text_muted),
@@ -992,6 +994,7 @@ impl ModalView for CommandPaletteView {
         } else {
             format!("{} / {} matches", self.filtered.len(), self.entries.len())
         };
+        let match_count = truncate_to_width(&match_count, content_area.width as usize);
         lines.push(Line::from(Span::styled(
             match_count,
             Style::default().fg(self.ui_theme.text_dim).italic(),
@@ -1021,8 +1024,9 @@ impl ModalView for CommandPaletteView {
             }
         }
         if self.filtered.is_empty() {
+            let no_matches = truncate_to_width("No matches.", content_area.width as usize);
             lines.push(Line::from(Span::styled(
-                "No matches.",
+                no_matches,
                 Style::default().fg(self.ui_theme.text_muted).italic(),
             )));
         } else {
@@ -1580,6 +1584,52 @@ mod tests {
                 "command palette row overflowed 80 columns: {row:?}"
             );
         }
+    }
+
+    #[test]
+    fn command_palette_long_filter_echo_fits_narrow_width() {
+        let entries = vec![palette_entry(
+            PaletteSection::Command,
+            "/wide",
+            "wide command",
+            "/wide",
+        )];
+        let mut view =
+            CommandPaletteView::new(entries).with_ui_theme(palette::DEEPSEEK_SHELL_UI_THEME);
+        view.query = "\u{4f1a}\u{8bdd}\u{5217}\u{8868}".repeat(12);
+        view.refilter();
+
+        let area = Rect::new(0, 0, 40, 16);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+
+        for y in area.top()..area.bottom() {
+            let mut row = String::new();
+            for x in area.left()..area.right() {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            assert!(
+                UnicodeWidthStr::width(row.as_str()) <= usize::from(area.width),
+                "command palette long filter row overflowed narrow width: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_palette_footer_line_truncates_to_display_width() {
+        let line = command_palette_footer_line(
+            " Up/Down move Enter run/open Esc close \u{4e0a}\u{4e0b}\u{79fb}\u{52a8} ",
+            20,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 20);
+        assert!(plain.is_char_boundary(plain.len()));
     }
 
     #[test]
