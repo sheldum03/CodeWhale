@@ -83,6 +83,7 @@ pub fn tool_family_for_name(name: &str) -> ToolFamily {
         "read_file"
         | "list_dir"
         | "view_image"
+        | "image_analyze"
         | "handle_read"
         | "image_ocr"
         | "project_map"
@@ -104,6 +105,7 @@ pub fn tool_family_for_name(name: &str) -> ToolFamily {
         | "pandoc_convert"
         | "remember"
         | "note"
+        | "revert_turn"
         | "github_comment"
         | "github_close_issue"
         | "github_close_pr"
@@ -117,6 +119,9 @@ pub fn tool_family_for_name(name: &str) -> ToolFamily {
         | "exec_interact"
         | "task_shell_start"
         | "task_shell_wait"
+        | "notify"
+        | "speech"
+        | "tts"
         | "automation_run" => ToolFamily::Run,
         "grep_files"
         | "file_search"
@@ -406,12 +411,39 @@ mod tests {
         assert_eq!(tool_family_for_name("github_pr_context"), ToolFamily::Read);
         assert_eq!(tool_family_for_name("github_comment"), ToolFamily::Patch);
         assert_eq!(tool_family_for_name("fim_edit"), ToolFamily::Patch);
+        assert_eq!(tool_family_for_name("image_analyze"), ToolFamily::Read);
+        assert_eq!(tool_family_for_name("revert_turn"), ToolFamily::Patch);
+        assert_eq!(tool_family_for_name("notify"), ToolFamily::Run);
+        assert_eq!(tool_family_for_name("speech"), ToolFamily::Run);
+        assert_eq!(tool_family_for_name("tts"), ToolFamily::Run);
         assert_eq!(tool_family_for_name("run_verifiers"), ToolFamily::Verify);
         assert_eq!(tool_family_for_name("pr_attempt_preflight"), ToolFamily::Verify);
         assert_eq!(
             tool_family_for_name("totally_new_tool"),
             ToolFamily::Generic
         );
+    }
+
+    #[test]
+    fn registered_visual_tools_do_not_fall_back_to_generic_family() {
+        let registered_names = [
+            "image_analyze",
+            "revert_turn",
+            "notify",
+            "speech",
+            "tts",
+            "retrieve_tool_result",
+            "request_user_input",
+            "run_verifiers",
+        ];
+
+        for name in registered_names {
+            assert_ne!(
+                tool_family_for_name(name),
+                ToolFamily::Generic,
+                "registered tool should have a semantic visual family: {name}"
+            );
+        }
     }
 
     #[test]
