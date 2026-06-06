@@ -6950,7 +6950,7 @@ fn render(f: &mut Frame, app: &mut App) {
             if let Some(ref tooltip_text) = app.sidebar_hover_tooltip
                 && let Some((mouse_col, mouse_row)) = app.last_mouse_pos
             {
-                let text_width = (tooltip_text.len() as u16).clamp(10, 60);
+                let text_width = sidebar_tooltip_width(tooltip_text);
                 let tooltip_height = 1u16;
                 let x = mouse_col
                     .saturating_add(2)
@@ -9602,6 +9602,10 @@ fn is_newer_version(latest: &str, current: &str) -> bool {
         (Some(l), Some(c)) => l > c,
         _ => latest != current,
     }
+}
+
+fn sidebar_tooltip_width(text: &str) -> u16 {
+    unicode_width::UnicodeWidthStr::width(text).clamp(10, 60) as u16
 }
 
 /// Parse a `major.minor.patch` version string into a comparable tuple.

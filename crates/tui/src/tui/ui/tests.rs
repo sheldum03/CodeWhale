@@ -35,6 +35,16 @@ use unicode_width::UnicodeWidthStr;
 use crate::tui::selection::{SelectionAutoscroll, TranscriptSelectionPoint};
 use tempfile::TempDir;
 
+#[test]
+fn sidebar_tooltip_width_uses_display_width() {
+    let tooltip = "当前任务";
+
+    assert_eq!(UnicodeWidthStr::width(tooltip), 8);
+    assert_eq!(tooltip.len(), 12);
+    assert_eq!(sidebar_tooltip_width(tooltip), 10);
+    assert_eq!(sidebar_tooltip_width("a very long sidebar tooltip label"), 33);
+}
+
 struct ConfigPathEnvGuard {
     _tmp: TempDir,
     previous: Option<OsString>,
