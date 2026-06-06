@@ -1,5 +1,10 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::Style,
+    text::{Line, Span},
+};
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -1494,6 +1499,46 @@ fn truncate_labeled_value(label: &str, value: &str, max_width: usize) -> String 
     truncate_view_text(value, max_width.saturating_sub(label_width))
 }
 
+fn render_config_search_line(
+    search_value: &str,
+    match_count: usize,
+    total_count: usize,
+    max_width: usize,
+    ui_theme: UiTheme,
+) -> Line<'static> {
+    let label = "  Search: ";
+    let count = format!("  ({match_count}/{total_count})");
+    let label_width = UnicodeWidthStr::width(label);
+    let count_width = UnicodeWidthStr::width(count.as_str());
+
+    if label_width + count_width <= max_width {
+        let search = truncate_view_text(
+            search_value,
+            max_width.saturating_sub(label_width + count_width),
+        );
+        return Line::from(vec![
+            Span::styled(label, Style::default().fg(ui_theme.text_muted)),
+            Span::raw(search),
+            Span::styled(count, Style::default().fg(ui_theme.text_muted)),
+        ]);
+    }
+
+    Line::from(truncate_spans_to_width(
+        vec![
+            Span::styled(label, Style::default().fg(ui_theme.text_muted)),
+            Span::styled(count, Style::default().fg(ui_theme.text_muted)),
+        ],
+        max_width,
+    ))
+}
+
+fn config_modal_footer_line(footer: &str, max_width: usize, ui_theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        truncate_view_text(footer, max_width),
+        Style::default().fg(ui_theme.text_muted),
+    ))
+}
+
 impl ModalView for ConfigView {
     fn kind(&self) -> ModalKind {
         ModalKind::Config
@@ -1712,14 +1757,13 @@ impl ModalView for ConfigView {
                     self.tr(MessageId::ConfigTitle),
                     Style::default().fg(self.ui_theme.accent_primary).bold(),
                 )]),
-                Line::from(vec![
-                    Span::styled("  Search: ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw(search_value),
-                    Span::styled(
-                        format!("  ({match_count}/{})", self.rows.len()),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                ]),
+                render_config_search_line(
+                    &search_value,
+                    match_count,
+                    self.rows.len(),
+                    usize::from(inner.width),
+                    self.ui_theme,
+                ),
                 Line::from(""),
                 Line::from(format!(
                     "  {} {} {}",
@@ -1837,10 +1881,11 @@ impl ModalView for ConfigView {
                     self.tr(MessageId::ConfigModalTitle),
                     Style::default().fg(self.ui_theme.accent_primary).bold(),
                 )]))
-                .title_bottom(Line::from(Span::styled(
-                    footer,
-                    Style::default().fg(self.ui_theme.text_muted),
-                )))
+                .title_bottom(config_modal_footer_line(
+                    &footer,
+                    popup_area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default().bg(self.ui_theme.surface_bg))
@@ -2457,10 +2502,10 @@ fn pad_view_text(text: &str, width: usize) -> String {
 mod tests {
     use super::{
         ConfigListItem, ConfigSection, ConfigView, ModalKind, ModalView, ShellControlView,
-        ViewAction, ViewEvent, ViewStack, config_editor_move_hint, modal_summary_separator,
-        pad_view_text, render_ascii_views_modal_chrome, render_shell_control_option_line,
-        render_subagent_row, scroll_nav_hint, subagent_steps_suffix, subagent_view_agents,
-        truncate_view_text,
+        ViewAction, ViewEvent, ViewStack, config_editor_move_hint, config_modal_footer_line,
+        modal_summary_separator, pad_view_text, render_ascii_views_modal_chrome,
+        render_config_search_line, render_shell_control_option_line, render_subagent_row,
+        scroll_nav_hint, subagent_steps_suffix, subagent_view_agents, truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
@@ -2875,6 +2920,49 @@ mod tests {
         assert!(
             value.is_char_boundary(value.len()),
             "value must not split UTF-8 codepoints: {value:?}"
+        );
+    }
+
+    #[test]
+    fn config_search_line_truncates_filter_to_display_width() {
+        let line = render_config_search_line(
+            &"\u{914d}\u{7f6e}\u{641c}\u{7d22}".repeat(12),
+            12,
+            48,
+            32,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 32);
+        assert!(plain.ends_with("(12/48)"));
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "search line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn config_modal_footer_line_truncates_to_display_width() {
+        let line = config_modal_footer_line(
+            " Enter=apply, Esc=cancel, Ctrl+U=clear, Ctrl+A=all, \u{5de6}\u{53f3}\u{79fb}\u{52a8} ",
+            28,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 28);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "footer must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
