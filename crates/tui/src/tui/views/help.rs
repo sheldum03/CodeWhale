@@ -417,6 +417,7 @@ impl ModalView for HelpView {
 
         Clear.render(popup_area, buf);
 
+        let inner_width = popup_width.saturating_sub(4) as usize;
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         let query_label = if self.query.is_empty() {
@@ -424,6 +425,7 @@ impl ModalView for HelpView {
         } else {
             format!("{}{}", self.tr(MessageId::HelpFilterPrefix), self.query)
         };
+        let query_label = truncate_to_width(&query_label, inner_width);
         lines.push(Line::from(Span::styled(
             query_label,
             Style::default()
@@ -436,6 +438,7 @@ impl ModalView for HelpView {
         } else {
             format!("{} / {} matches", self.filtered.len(), self.entries.len())
         };
+        let match_count = truncate_to_width(&match_count, inner_width);
         lines.push(Line::from(Span::styled(
             match_count,
             Style::default()
@@ -445,8 +448,9 @@ impl ModalView for HelpView {
         lines.push(Line::from(""));
 
         if self.filtered.is_empty() {
+            let no_matches = truncate_to_width(self.tr(MessageId::HelpNoMatches), inner_width);
             lines.push(Line::from(Span::styled(
-                self.tr(MessageId::HelpNoMatches),
+                no_matches,
                 Style::default()
                     .fg(self.ui_theme.text_muted)
                     .add_modifier(Modifier::ITALIC),
@@ -455,7 +459,6 @@ impl ModalView for HelpView {
             // The chord/label column takes up to 28 cols on wide screens;
             // descriptions fill the remainder. Borders and padding eat 4
             // cells from each side (border 1 + padding 1) × 2.
-            let inner_width = popup_width.saturating_sub(4) as usize;
             let label_width = 28.min(inner_width.saturating_sub(8));
             let desc_capacity = inner_width.saturating_sub(label_width + 4);
 
@@ -1069,6 +1072,29 @@ mod tests {
             !dump.contains("/model"),
             "non-matching commands should not render under a `mode yolo` filter:\n{dump}"
         );
+    }
+
+    #[test]
+    fn long_help_filter_echo_fits_narrow_width() {
+        let mut view = HelpView::new_for_locale(Locale::ZhHans)
+            .with_ui_theme(palette::DEEPSEEK_SHELL_UI_THEME);
+        let long_query = "\u{4f1a}\u{8bdd}\u{5217}\u{8868}".repeat(12);
+        type_filter(&mut view, &long_query);
+
+        let area = Rect::new(0, 0, 40, 16);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+
+        for y in area.top()..area.bottom() {
+            let mut row = String::new();
+            for x in area.left()..area.right() {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            assert!(
+                UnicodeWidthStr::width(row.as_str()) <= usize::from(area.width),
+                "long filter row overflowed narrow help overlay: {row:?}"
+            );
+        }
     }
 
     #[test]
