@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{Value, json};
 use tokio::process::Command;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use uuid::Uuid;
 
 use crate::command_safety::{SafetyLevel, analyze_command};
@@ -963,15 +964,21 @@ fn classify_gate_failure(
 
 fn summarize(text: &str, limit: usize) -> String {
     let mut out = String::new();
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= limit.saturating_sub(3) {
-            out.push_str("...");
-            return out;
-        }
+    let mut width = 0usize;
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let value_limit = limit.saturating_sub(ellipsis_width);
+    for ch in text.chars() {
         if ch.is_control() && ch != '\n' && ch != '\t' {
             continue;
         }
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_limit {
+            out.push_str(&ellipsis.chars().take(limit).collect::<String>());
+            return out;
+        }
         out.push(ch);
+        width += ch_width;
     }
     if out.trim().is_empty() {
         "(no output)".to_string()
@@ -1032,5 +1039,14 @@ mod tests {
         let (program, args) = build_gate_command_parts("echo hello");
         assert_eq!(program, "/bin/sh");
         assert_eq!(args, vec!["-lc".to_string(), "echo hello".to_string()]);
+    }
+
+    #[test]
+    fn summarize_truncates_cjk_by_display_width() {
+        let summary = summarize(&"任务输出".repeat(80), 41);
+
+        assert!(UnicodeWidthStr::width(summary.as_str()) <= 41);
+        assert!(summary.ends_with("..."));
+        assert!(summary.chars().count() < 41);
     }
 }
