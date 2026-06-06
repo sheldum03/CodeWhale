@@ -343,7 +343,7 @@ pub struct StatusToast {
     pub ttl_ms: Option<u64>,
 }
 
-fn transient_status_text(text: impl Into<String>) -> String {
+pub(crate) fn transient_status_text(text: impl Into<String>) -> String {
     crate::commands::command_text_with_ascii_fallback(text)
 }
 

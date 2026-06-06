@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::localization::MessageId;
-use crate::tui::app::App;
+use crate::tui::app::{App, transient_status_text};
 
 pub fn lines(app: &App) -> Vec<Line<'static>> {
     let ui_theme = app.ui_theme;
@@ -40,7 +40,7 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     if let Some(message) = app.status_message.as_deref() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            message.to_string(),
+            transient_status_text(message),
             Style::default().fg(ui_theme.warning),
         )));
     }

@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::localization::MessageId;
-use crate::tui::app::App;
+use crate::tui::app::{App, transient_status_text};
 
 pub fn lines(app: &App) -> Vec<Line<'static>> {
     let ui_theme = app.ui_theme;
@@ -59,7 +59,7 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
 
     if let Some(message) = app.status_message.as_deref() {
         lines.push(Line::from(Span::styled(
-            message.to_string(),
+            transient_status_text(message),
             Style::default().fg(ui_theme.warning),
         )));
         lines.push(Line::from(""));
@@ -99,6 +99,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::localization::Locale;
+    use crate::test_support::EnvVarGuard;
     use crate::tui::app::TuiOptions;
     use std::path::PathBuf;
 
@@ -172,5 +173,21 @@ mod tests {
             body.contains("Press Enter to save"),
             "expected en footer, got: {body}"
         );
+    }
+
+    #[test]
+    fn api_key_status_message_uses_ascii_fallback_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = test_app_with_locale(Locale::En);
+        app.status_message = Some("saved \u{2713} \u{00B7} retry \u{2192}".to_string());
+
+        let body: String = lines(&app)
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(body.contains("saved + - retry ->"), "got: {body}");
     }
 }
