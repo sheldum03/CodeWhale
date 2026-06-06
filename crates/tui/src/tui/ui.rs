@@ -6766,6 +6766,9 @@ fn render(f: &mut Frame, app: &mut App) {
     // Render header
     {
         crate::tui::notifications::set_title_visual_theme(app.theme_id);
+        crate::tui::notifications::set_title_animation_enabled(
+            !app.low_motion && app.fancy_animations,
+        );
         let sanitized_context_window = context_usage
             .as_ref()
             .map(|(_, max, _)| *max)

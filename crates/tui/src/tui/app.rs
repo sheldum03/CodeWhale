@@ -1989,6 +1989,7 @@ impl App {
                 }
                 _ => (String::new(), 0, false),
             };
+        crate::tui::notifications::set_title_animation_enabled(!low_motion && fancy_animations);
         Self {
             mode: initial_mode,
             composer: ComposerState {

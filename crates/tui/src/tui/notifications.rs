@@ -271,6 +271,11 @@ const TITLE_ANIMATION_INTERVAL: Duration = Duration::from_millis(800);
 /// `start_title_animation()`, cleared by `stop_title_animation()`.
 static TITLE_ANIMATION_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// User accessibility preference for terminal-title animation. The engine
+/// starts title animation outside the TUI render path, so the UI keeps this
+/// flag in sync with `low_motion` and `fancy_animations`.
+static TITLE_ANIMATION_ENABLED: AtomicBool = AtomicBool::new(true);
+
 /// Theme-level title style override. The engine starts title animation outside
 /// the TUI render path, so the UI keeps this flag in sync as the active theme
 /// changes.
@@ -281,6 +286,14 @@ pub fn set_title_visual_theme(theme_id: crate::palette::ThemeId) {
         theme_id == crate::palette::ThemeId::DeepSeekShell,
         Ordering::SeqCst,
     );
+}
+
+pub fn set_title_animation_enabled(enabled: bool) {
+    TITLE_ANIMATION_ENABLED.store(enabled, Ordering::SeqCst);
+}
+
+fn title_animation_enabled() -> bool {
+    TITLE_ANIMATION_ENABLED.load(Ordering::SeqCst)
 }
 
 /// Write OSC 0 (set window title) sequence.
@@ -324,6 +337,12 @@ fn completion_title() -> &'static str {
 /// `TITLE_ANIMATION_RUNNING`. Each call restarts the animation with the
 /// given `original` base title — safe to call on every turn start.
 pub fn start_title_animation(original: &str) {
+    if !title_animation_enabled() {
+        TITLE_ANIMATION_RUNNING.store(false, Ordering::SeqCst);
+        set_terminal_title(original);
+        return;
+    }
+
     // Signal any existing animation loop to exit, then start fresh.
     TITLE_ANIMATION_RUNNING.store(true, Ordering::SeqCst);
     let base = original.to_string();
@@ -837,6 +856,18 @@ mod tests {
         assert_eq!(completion_title(), "CodeWhale ready");
 
         set_title_visual_theme(crate::palette::ThemeId::Whale);
+    }
+
+    #[test]
+    fn title_animation_can_be_disabled_for_low_motion() {
+        let _lock = lock_test_env();
+        set_title_animation_enabled(false);
+        assert!(!title_animation_enabled());
+        start_title_animation("CodeWhale");
+        assert!(!TITLE_ANIMATION_RUNNING.load(Ordering::SeqCst));
+
+        set_title_animation_enabled(true);
+        assert!(title_animation_enabled());
     }
 
     #[test]
