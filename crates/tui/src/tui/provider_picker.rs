@@ -200,19 +200,14 @@ impl ProviderPickerView {
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
                 )))
-                .title_bottom(Line::from(vec![
-                    Span::styled(
-                        provider_picker_nav_hint(),
-                        Style::default().fg(self.ui_theme.text_muted),
+                .title_bottom(provider_picker_footer_line(
+                    &format!(
+                        "{}move Enter {enter_action} R edit key Esc cancel ",
+                        provider_picker_nav_hint()
                     ),
-                    Span::raw("move "),
-                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw(format!("{enter_action} ")),
-                    Span::styled(" R ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("edit key "),
-                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("cancel "),
-                ]))
+                    area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default());
@@ -307,12 +302,11 @@ impl ProviderPickerView {
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
                 )))
-                .title_bottom(Line::from(vec![
-                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("save & switch "),
-                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("back "),
-                ]))
+                .title_bottom(provider_picker_footer_line(
+                    " Enter save & switch Esc back ",
+                    area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default());
@@ -594,6 +588,13 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
         width += ch_width;
     }
     out
+}
+
+fn provider_picker_footer_line(footer: &str, max_width: usize, theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default().fg(theme.text_muted),
+    ))
 }
 
 impl ModalView for ProviderPickerView {
@@ -1112,5 +1113,22 @@ mod tests {
             prefix.is_char_boundary(prefix.len()),
             "prefix must not split UTF-8 codepoints: {prefix:?}"
         );
+    }
+
+    #[test]
+    fn provider_picker_footer_line_truncates_to_display_width() {
+        let line = provider_picker_footer_line(
+            " Up/Down move Enter apply R edit key Esc cancel \u{4e0a}\u{4e0b}\u{79fb}\u{52a8} ",
+            22,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 22);
+        assert!(plain.is_char_boundary(plain.len()));
     }
 }

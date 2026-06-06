@@ -155,14 +155,11 @@ impl ModalView for FeedbackPickerView {
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
                 )))
-                .title_bottom(Line::from(vec![
-                    Span::styled(" Up/Down ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("move "),
-                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("open "),
-                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("cancel "),
-                ]))
+                .title_bottom(feedback_picker_footer_line(
+                    " Up/Down move Enter open Esc cancel ",
+                    popup_area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default().bg(self.ui_theme.surface_bg))
@@ -343,6 +340,13 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
     out
 }
 
+fn feedback_picker_footer_line(footer: &str, max_width: usize, theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default().fg(theme.text_muted),
+    ))
+}
+
 fn fit_text(text: &str, max_width: usize) -> String {
     if UnicodeWidthStr::width(text) <= max_width {
         return text.to_string();
@@ -450,6 +454,23 @@ mod tests {
             prefix.is_char_boundary(prefix.len()),
             "prefix must not split UTF-8 codepoints: {prefix:?}"
         );
+    }
+
+    #[test]
+    fn feedback_picker_footer_line_truncates_to_display_width() {
+        let line = feedback_picker_footer_line(
+            " Up/Down move Enter open Esc cancel \u{4e0a}\u{4e0b}\u{79fb}\u{52a8} ",
+            18,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 18);
+        assert!(plain.is_char_boundary(plain.len()));
     }
 
     #[test]

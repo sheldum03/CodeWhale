@@ -568,19 +568,11 @@ impl ModelPickerView {
                         .fg(self.ui_theme.accent_primary)
                         .add_modifier(Modifier::BOLD),
                 )))
-                .title_bottom(Line::from(vec![
-                    Span::styled(
-                        model_picker_nav_hint(),
-                        Style::default().fg(self.ui_theme.text_muted),
-                    ),
-                    Span::raw("move "),
-                    Span::styled(" Tab ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("switch "),
-                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("apply "),
-                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
-                    Span::raw("cancel "),
-                ]))
+                .title_bottom(model_picker_footer_line(
+                    &format!("{}move Tab switch Enter apply Esc cancel ", model_picker_nav_hint()),
+                    popup_area.width.saturating_sub(4) as usize,
+                    self.ui_theme,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(self.ui_theme.border))
                 .style(Style::default());
@@ -793,6 +785,13 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
         width += ch_width;
     }
     out
+}
+
+fn model_picker_footer_line(footer: &str, max_width: usize, theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default().fg(theme.text_muted),
+    ))
 }
 
 #[cfg(test)]
@@ -1028,6 +1027,23 @@ mod tests {
             prefix.is_char_boundary(prefix.len()),
             "prefix must not split UTF-8 codepoints: {prefix:?}"
         );
+    }
+
+    #[test]
+    fn model_picker_footer_line_truncates_to_display_width() {
+        let line = model_picker_footer_line(
+            " Up/Down move Tab switch Enter apply Esc cancel \u{4e0a}\u{4e0b}\u{79fb}\u{52a8} ",
+            22,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 22);
+        assert!(plain.is_char_boundary(plain.len()));
     }
 
     #[test]

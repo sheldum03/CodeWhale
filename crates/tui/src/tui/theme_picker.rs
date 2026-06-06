@@ -245,14 +245,11 @@ impl ModalView for ThemePickerView {
                         .fg(live.status_working)
                         .add_modifier(Modifier::BOLD),
                 )))
-                .title_bottom(Line::from(vec![
-                    Span::styled(theme_picker_nav_hint(), Style::default().fg(live.text_muted)),
-                    Span::raw("preview "),
-                    Span::styled(" Enter ", Style::default().fg(live.text_muted)),
-                    Span::raw("save "),
-                    Span::styled(" Esc ", Style::default().fg(live.text_muted)),
-                    Span::raw("revert "),
-                ]))
+                .title_bottom(theme_picker_footer_line(
+                    &format!("{}preview Enter save Esc revert ", theme_picker_nav_hint()),
+                    popup_area.width.saturating_sub(4) as usize,
+                    live,
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(live.border))
                 .style(Style::default().bg(live.surface_bg))
@@ -441,6 +438,13 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
             }
         })
         .collect()
+}
+
+fn theme_picker_footer_line(footer: &str, max_width: usize, theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        ascii_prefix(footer, max_width),
+        Style::default().fg(theme.text_muted),
+    ))
 }
 
 fn pad_display_width(text: &str, width: usize) -> String {
@@ -751,6 +755,23 @@ mod tests {
             prefix.is_char_boundary(prefix.len()),
             "prefix should end on a valid char boundary: {prefix:?}"
         );
+    }
+
+    #[test]
+    fn theme_picker_footer_line_truncates_to_display_width() {
+        let line = theme_picker_footer_line(
+            " Up/Down preview Enter save Esc revert \u{4e0a}\u{4e0b}\u{79fb}\u{52a8} ",
+            20,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 20);
+        assert!(plain.is_char_boundary(plain.len()));
     }
 
     #[test]
