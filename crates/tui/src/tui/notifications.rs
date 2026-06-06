@@ -20,6 +20,7 @@ use std::io::{self, Write};
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Notification delivery method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -763,7 +764,7 @@ pub fn latest_assistant_text(messages: &[Message]) -> Option<String> {
 /// hand the OS notification system. Returns `None` when nothing
 /// useful remains after sanitization.
 pub fn text_summary(text: &str) -> Option<String> {
-    const MAX_CHARS: usize = 360;
+    const MAX_WIDTH: usize = 360;
 
     let sanitized = super::ui::sanitize_stream_chunk(text);
     let collapsed = sanitized
@@ -777,14 +778,33 @@ pub fn text_summary(text: &str) -> Option<String> {
         return None;
     }
 
-    if let Some((idx, _)) = trimmed.char_indices().nth(MAX_CHARS) {
-        let mut s = String::with_capacity(idx + 3);
-        s.push_str(&trimmed[..idx]);
-        s.push_str("...");
-        Some(s)
-    } else {
-        Some(trimmed.to_string())
+    Some(truncate_display_width_with_ellipsis(trimmed, MAX_WIDTH))
+}
+
+fn truncate_display_width_with_ellipsis(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
     }
+
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if max_width <= ellipsis_width {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(ellipsis_width);
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str(ellipsis);
+    out
 }
 
 #[cfg(test)]
@@ -868,6 +888,23 @@ mod tests {
 
         set_title_animation_enabled(true);
         assert!(title_animation_enabled());
+    }
+
+    #[test]
+    fn text_summary_truncates_cjk_by_display_width() {
+        let summary = text_summary(&"通知摘要".repeat(120)).expect("summary");
+
+        assert!(UnicodeWidthStr::width(summary.as_str()) <= 360);
+        assert!(summary.ends_with("..."));
+        assert!(summary.chars().count() < 360);
+    }
+
+    #[test]
+    fn notification_truncation_respects_tiny_display_widths() {
+        for width in 0..=3 {
+            let summary = truncate_display_width_with_ellipsis("通知摘要", width);
+            assert_eq!(UnicodeWidthStr::width(summary.as_str()), width);
+        }
     }
 
     #[test]
