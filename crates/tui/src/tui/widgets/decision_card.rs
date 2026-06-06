@@ -12,6 +12,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Widget},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -197,6 +198,26 @@ mod tests {
     }
 
     #[test]
+    fn decision_card_title_line_truncates_to_display_width() {
+        let line = decision_card_title_line(
+            &format!(" {} ", "\u{51b3}\u{7b56}\u{5361}\u{7247}".repeat(8)),
+            14,
+            Style::default(),
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 14);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "decision card title must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
     fn decision_ellipsis_has_ascii_fallback() {
         if palette::ascii_ui_enabled() {
             assert_eq!(decision_ellipsis(1), ".");
@@ -268,7 +289,11 @@ impl Renderable for DecisionCard {
                 .borders(Borders::ALL)
                 .border_style(border_style)
                 .style(Style::default().bg(self.ui_theme.surface_bg))
-                .title(" Decision Required ")
+                .title(decision_card_title_line(
+                    " Decision Required ",
+                    area.width.saturating_sub(4) as usize,
+                    question_style,
+                ))
                 .title_style(question_style);
             let inner = block.inner(area);
             block.render(area, buf);
@@ -446,6 +471,10 @@ fn ascii_prefix(text: &str, max_width: usize) -> String {
             }
         })
         .collect()
+}
+
+fn decision_card_title_line(title: &str, max_width: usize, style: Style) -> Line<'static> {
+    Line::from(Span::styled(ascii_prefix(title, max_width), style))
 }
 
 fn decision_separator() -> &'static str {
