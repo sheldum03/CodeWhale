@@ -189,10 +189,13 @@ impl ModalView for ModePickerView {
             };
             let pointer = if is_cursor { ">" } else { " " };
             let label = format!("{pointer} {}. {}", row.number, pad_display_width(row.name, 7));
+            let hint_width = usize::from(inner.width)
+                .saturating_sub(UnicodeWidthStr::width(label.as_str()));
+            let hint = fit_text(row.hint, hint_width);
 
             lines.push(Line::from(vec![
                 Span::styled(label, row_style),
-                Span::styled(row.hint, hint_style),
+                Span::styled(hint, hint_style),
             ]));
         }
 
@@ -307,6 +310,32 @@ fn pad_display_width(text: &str, width: usize) -> String {
     out
 }
 
+fn fit_text(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(3);
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str("...");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,5 +417,25 @@ mod tests {
             padded.starts_with("\u{8ba1}\u{5212}"),
             "padded mode label should preserve visible text: {padded:?}"
         );
+    }
+
+    #[test]
+    fn mode_hint_fits_remaining_display_width() {
+        let label = format!("> 1. {}", pad_display_width("Agent", 7));
+        let hint_width = 40usize.saturating_sub(UnicodeWidthStr::width(label.as_str()));
+        let hint = fit_text("Normal execution with approvals", hint_width);
+        let rendered = format!("{label}{hint}");
+
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 40);
+    }
+
+    #[test]
+    fn mode_hint_truncates_cjk_by_display_width() {
+        let text = "计划模式会先确认执行步骤".repeat(3);
+        let hint = fit_text(&text, 10);
+
+        assert!(UnicodeWidthStr::width(hint.as_str()) <= 10);
+        assert!(hint.is_char_boundary(hint.len()));
+        assert!(hint.ends_with("..."));
     }
 }
