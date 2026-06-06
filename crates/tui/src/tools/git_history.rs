@@ -9,6 +9,7 @@ use std::process::Output;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
@@ -472,32 +473,33 @@ fn format_command(working_dir: &Path, args: &[String]) -> String {
     )
 }
 
-fn truncate_with_note(text: &str, max_chars: usize) -> (String, bool, usize) {
-    if text.chars().count() <= max_chars {
+fn truncate_with_note(text: &str, max_width: usize) -> (String, bool, usize) {
+    if UnicodeWidthStr::width(text) <= max_width {
         return (text.to_string(), false, 0);
     }
-    let end = char_boundary_index(text, max_chars);
-    let truncated = &text[..end];
+    let truncated = take_display_width(text, max_width);
     let omitted_chars = text
         .chars()
         .count()
         .saturating_sub(truncated.chars().count());
     let note = format!(
-        "\n\n[output truncated to {max_chars} characters; {omitted_chars} characters omitted]"
+        "\n\n[output truncated to {max_width} display columns; {omitted_chars} characters omitted]"
     );
     (format!("{truncated}{note}"), true, omitted_chars)
 }
 
-fn char_boundary_index(text: &str, max_chars: usize) -> usize {
-    if max_chars == 0 {
-        return 0;
-    }
-    for (count, (idx, _)) in text.char_indices().enumerate() {
-        if count == max_chars {
-            return idx;
+fn take_display_width(text: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
         }
+        out.push(ch);
+        width += ch_width;
     }
-    text.len()
+    out
 }
 
 #[cfg(test)]
@@ -619,5 +621,20 @@ mod tests {
             .await
             .expect_err("directory path should fail");
         assert!(matches!(result, ToolError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn truncation_limits_cjk_by_display_width() {
+        let (truncated, did_truncate, omitted) = truncate_with_note(&"历史输出".repeat(40), 33);
+        let prefix = truncated
+            .split_once("\n\n[output truncated")
+            .map(|(prefix, _)| prefix)
+            .expect("truncation note");
+
+        assert!(did_truncate);
+        assert!(omitted > 0);
+        assert!(UnicodeWidthStr::width(prefix) <= 33);
+        assert!(prefix.chars().count() < 33);
+        assert!(truncated.contains("display columns"));
     }
 }
