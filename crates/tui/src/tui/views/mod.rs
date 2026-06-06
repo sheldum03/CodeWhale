@@ -663,10 +663,11 @@ impl ModalView for ShellControlView {
                             " Shell command ",
                             Style::default().fg(self.ui_theme.accent_primary).bold(),
                         )]))
-                        .title_bottom(Line::from(Span::styled(
+                        .title_bottom(shell_control_footer_line(
                             " Enter select | Esc close ",
-                            Style::default().fg(self.ui_theme.text_muted),
-                        )))
+                            popup_area.width.saturating_sub(4) as usize,
+                            self.ui_theme,
+                        ))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(self.ui_theme.border))
                         .style(Style::default().bg(self.ui_theme.surface_bg))
@@ -1560,6 +1561,13 @@ fn subagent_modal_footer_line(
             ),
         ],
         max_width,
+    ))
+}
+
+fn shell_control_footer_line(footer: &str, max_width: usize, ui_theme: UiTheme) -> Line<'static> {
+    Line::from(Span::styled(
+        truncate_view_text(footer, max_width),
+        Style::default().fg(ui_theme.text_muted),
     ))
 }
 
@@ -2520,8 +2528,8 @@ mod tests {
         ViewAction, ViewEvent, ViewStack, config_editor_move_hint, config_modal_footer_line,
         modal_summary_separator, pad_view_text, render_ascii_views_modal_chrome,
         render_config_search_line, render_shell_control_option_line, render_subagent_row,
-        scroll_nav_hint, subagent_modal_footer_line, subagent_steps_suffix, subagent_view_agents,
-        truncate_view_text,
+        scroll_nav_hint, shell_control_footer_line, subagent_modal_footer_line,
+        subagent_steps_suffix, subagent_view_agents, truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
@@ -2621,6 +2629,26 @@ mod tests {
             "shell control key column should keep visual width: {plain:?}"
         );
         assert!(plain.starts_with("> \u{8fd4} "));
+    }
+
+    #[test]
+    fn shell_control_footer_line_truncates_to_display_width() {
+        let line = shell_control_footer_line(
+            " Enter select | Esc close \u{5de6}\u{53f3}\u{79fb}\u{52a8} ",
+            18,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 18);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "shell-control footer must not split UTF-8 codepoints: {plain:?}"
+        );
     }
 
     struct ConfigSettingsEnvGuard {
