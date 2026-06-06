@@ -1318,23 +1318,25 @@ impl Renderable for ApprovalWidget<'_> {
         lines.push(Line::from(""));
         // About + impacts. Impact lines are the load-bearing content;
         // they tell the user what will happen.
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(label_about(locale), Style::default().fg(self.ui_theme.text_hint)),
-            Span::styled(
-                self.request.description_for_locale(locale),
-                Style::default().fg(self.ui_theme.text_body),
-            ),
-        ]));
+        let approval_content_width = card_area.width.saturating_sub(4) as usize;
+        let description = self.request.description_for_locale(locale);
+        lines.push(approval_labeled_line(
+            "  ",
+            label_about(locale),
+            &description,
+            Style::default().fg(self.ui_theme.text_hint),
+            Style::default().fg(self.ui_theme.text_body),
+            approval_content_width,
+        ));
         for impact in self.request.impacts_for_locale(locale).into_iter().take(4) {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    label_impact(locale),
-                    Style::default().fg(self.ui_theme.text_hint),
-                ),
-                Span::styled(impact, Style::default().fg(self.ui_theme.text_body)),
-            ]));
+            lines.push(approval_labeled_line(
+                "  ",
+                label_impact(locale),
+                &impact,
+                Style::default().fg(self.ui_theme.text_hint),
+                Style::default().fg(self.ui_theme.text_body),
+                approval_content_width,
+            ));
         }
 
         // Intent summary — the model's explanation of why this change is needed (#2381).
@@ -3795,6 +3797,29 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "approval labeled line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn approval_labeled_line_reserves_localized_label_width() {
+        let line = approval_labeled_line(
+            "  ",
+            "\u{5f71}\u{54cd}\u{ff1a}",
+            &"\u{5bbd}\u{5b57}\u{7b26}".repeat(12),
+            Style::default(),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval localized line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
