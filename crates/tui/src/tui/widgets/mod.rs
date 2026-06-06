@@ -1290,23 +1290,18 @@ impl Renderable for ApprovalWidget<'_> {
         // Header: stakes badge + tool identifier. The badge is the
         // first thing the eye lands on.
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                format!(" {} ", risk_badge_text(risk, locale)),
-                Style::default()
-                    .fg(self.ui_theme.surface_bg)
-                    .bg(palette_colors.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                self.request.tool_name.clone(),
-                Style::default()
-                    .fg(self.ui_theme.status_working)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(approval_header_line(
+            risk_badge_text(risk, locale),
+            &self.request.tool_name,
+            Style::default()
+                .fg(self.ui_theme.surface_bg)
+                .bg(palette_colors.accent)
+                .add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(self.ui_theme.status_working)
+                .add_modifier(Modifier::BOLD),
+            card_area.width.saturating_sub(4) as usize,
+        ));
 
         // Category line — English remains the baseline while localized
         // sessions get the same risk category in their UI language.
@@ -1630,6 +1625,31 @@ fn approval_labeled_line(
         Span::styled(
             truncate_display_width(value, max_width.saturating_sub(used_width)),
             value_style,
+        ),
+    ])
+}
+
+fn approval_header_line(
+    badge: &str,
+    tool_name: &str,
+    badge_style: Style,
+    tool_style: Style,
+    max_width: usize,
+) -> Line<'static> {
+    let prefix = "  ";
+    let badge_text = format!(" {badge} ");
+    let separator = "  ";
+    let used_width = UnicodeWidthStr::width(prefix)
+        + UnicodeWidthStr::width(badge_text.as_str())
+        + UnicodeWidthStr::width(separator);
+
+    Line::from(vec![
+        Span::raw(prefix),
+        Span::styled(badge_text, badge_style),
+        Span::raw(separator),
+        Span::styled(
+            truncate_display_width(tool_name, max_width.saturating_sub(used_width)),
+            tool_style,
         ),
     ])
 }
@@ -3742,6 +3762,28 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "approval labeled line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn approval_header_line_truncates_tool_name_to_display_width() {
+        let line = approval_header_line(
+            "HIGH",
+            &"\u{5de5}\u{5177}\u{540d}\u{79f0}".repeat(12),
+            Style::default(),
+            Style::default(),
+            24,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "approval header line must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
