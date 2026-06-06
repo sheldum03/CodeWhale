@@ -342,10 +342,7 @@ impl ProviderPickerView {
         ])];
         Paragraph::new(key_lines).render(layout[0], buf);
 
-        let hint = format!(
-            "Or set the {} environment variable and re-open /provider.",
-            Self::env_var_for(provider),
-        );
+        let hint = provider_key_env_hint(Self::env_var_for(provider), usize::from(layout[1].width));
         Paragraph::new(Line::from(Span::styled(
             hint,
             Style::default().fg(self.ui_theme.text_muted),
@@ -407,6 +404,13 @@ fn fit_key_display(text: &str, max_width: usize) -> String {
         width += ch_width;
     }
     format!("...{suffix}")
+}
+
+fn provider_key_env_hint(env_var: &str, max_width: usize) -> String {
+    fit_row_text(
+        &format!("Or set the {env_var} environment variable and re-open /provider."),
+        max_width,
+    )
 }
 
 struct ProviderRowText {
@@ -1034,6 +1038,20 @@ mod tests {
             let display = fit_key_display("********abcd", width);
             assert_eq!(UnicodeWidthStr::width(display.as_str()), width);
         }
+    }
+
+    #[test]
+    fn provider_key_env_hint_truncates_to_display_width() {
+        let hint = provider_key_env_hint(
+            "CODEWHALE_PROVIDER_\u{73af}\u{5883}\u{53d8}\u{91cf}_API_KEY",
+            32,
+        );
+
+        assert!(UnicodeWidthStr::width(hint.as_str()) <= 32);
+        assert!(
+            hint.is_char_boundary(hint.len()),
+            "provider env hint must not split UTF-8 codepoints: {hint:?}"
+        );
     }
 
     #[test]
