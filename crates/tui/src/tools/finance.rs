@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
@@ -512,14 +513,24 @@ fn millis_to_timeout_seconds(timeout_ms: u64) -> u64 {
 }
 
 fn truncate_for_error(text: &str) -> String {
-    const MAX_ERROR_CHARS: usize = 120;
+    const MAX_ERROR_WIDTH: usize = 120;
+    const ELLIPSIS: &str = "...";
+    if UnicodeWidthStr::width(text) <= MAX_ERROR_WIDTH {
+        return text.to_string();
+    }
+
     let mut out = String::new();
-    for ch in text.chars().take(MAX_ERROR_CHARS) {
+    let mut width = 0usize;
+    let limit = MAX_ERROR_WIDTH.saturating_sub(UnicodeWidthStr::width(ELLIPSIS));
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > limit {
+            break;
+        }
         out.push(ch);
+        width += ch_width;
     }
-    if text.chars().count() > MAX_ERROR_CHARS {
-        out.push_str("...");
-    }
+    out.push_str(ELLIPSIS);
     out
 }
 
@@ -635,6 +646,15 @@ mod tests {
         let path = tmp.path().to_path_buf();
         let ctx = ToolContext::new(path);
         (ctx, tmp)
+    }
+
+    #[test]
+    fn finance_error_preview_truncates_by_display_width() {
+        let preview = truncate_for_error(&"上游错误".repeat(80));
+
+        assert!(UnicodeWidthStr::width(preview.as_str()) <= 120);
+        assert!(preview.ends_with("..."));
+        assert!(preview.chars().count() < 120);
     }
 
     #[tokio::test]
