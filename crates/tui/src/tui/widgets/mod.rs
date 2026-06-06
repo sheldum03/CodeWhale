@@ -1636,6 +1636,14 @@ fn elevation_labeled_line(
     ])
 }
 
+fn elevation_body_text(text: &str, max_width: usize) -> String {
+    truncate_display_width(text, max_width)
+}
+
+fn elevation_indented_text(text: &str, indent: &str, max_width: usize) -> String {
+    truncate_display_width(text, max_width.saturating_sub(UnicodeWidthStr::width(indent)))
+}
+
 fn label_type(locale: Locale) -> &'static str {
     match locale {
         Locale::ZhHans => "类型：",
@@ -1832,7 +1840,10 @@ impl Renderable for ElevationWidget<'_> {
             .any(|option| matches!(option, ElevationOption::WithNetwork))
         {
             lines.push(Line::from(Span::styled(
-                "    - network retry enables outbound downloads and HTTP requests",
+                elevation_body_text(
+                    "    - network retry enables outbound downloads and HTTP requests",
+                    content_width,
+                ),
                 Style::default().fg(self.ui_theme.text_body),
             )));
         }
@@ -1843,12 +1854,18 @@ impl Renderable for ElevationWidget<'_> {
             .any(|option| matches!(option, ElevationOption::WithWriteAccess(_)))
         {
             lines.push(Line::from(Span::styled(
-                "    - write retry expands writable filesystem scope for this tool call",
+                elevation_body_text(
+                    "    - write retry expands writable filesystem scope for this tool call",
+                    content_width,
+                ),
                 Style::default().fg(self.ui_theme.text_body),
             )));
         }
         lines.push(Line::from(Span::styled(
-            "    - full access removes sandbox restrictions entirely for this retry",
+            elevation_body_text(
+                "    - full access removes sandbox restrictions entirely for this retry",
+                content_width,
+            ),
             Style::default().fg(self.ui_theme.text_body),
         )));
         lines.push(Line::from(""));
@@ -1893,7 +1910,7 @@ impl Renderable for ElevationWidget<'_> {
             lines.push(Line::from(vec![
                 Span::raw("      "),
                 Span::styled(
-                    option.description(),
+                    elevation_indented_text(option.description(), "      ", content_width),
                     Style::default().fg(self.ui_theme.text_muted),
                 ),
             ]));
@@ -3687,6 +3704,36 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "elevation line must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn elevation_body_text_truncates_to_display_width() {
+        let text = elevation_body_text(
+            &format!("    - {}", "\u{5f71}\u{54cd}\u{8bf4}\u{660e}".repeat(12)),
+            24,
+        );
+
+        assert!(UnicodeWidthStr::width(text.as_str()) <= 24);
+        assert!(
+            text.is_char_boundary(text.len()),
+            "elevation body text must not split UTF-8 codepoints: {text:?}"
+        );
+    }
+
+    #[test]
+    fn elevation_indented_text_reserves_indent_width() {
+        let indent = "      ";
+        let text = elevation_indented_text(
+            &"\u{9009}\u{9879}\u{63cf}\u{8ff0}".repeat(12),
+            indent,
+            24,
+        );
+
+        assert!(UnicodeWidthStr::width(text.as_str()) + indent.len() <= 24);
+        assert!(
+            text.is_char_boundary(text.len()),
+            "elevation indented text must not split UTF-8 codepoints: {text:?}"
         );
     }
 
