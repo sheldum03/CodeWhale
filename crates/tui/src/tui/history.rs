@@ -2224,7 +2224,7 @@ pub fn summarize_mcp_output(output: &str) -> McpOutputSummary {
                     "text" => {
                         let text = block.get("text").and_then(|v| v.as_str()).unwrap_or("");
                         if !text.is_empty() {
-                            lines.push(format!("- text: {}", truncate_text(text, 200)));
+                            lines.push(format!("- text: {}", truncate_text_to_width(text, 200)));
                         }
                     }
                     "image" | "image_url" => {
@@ -2234,7 +2234,7 @@ pub fn summarize_mcp_output(output: &str) -> McpOutputSummary {
                             .or_else(|| block.get("image_url"))
                             .and_then(|v| v.as_str());
                         if let Some(url) = url {
-                            lines.push(format!("- image: {}", truncate_text(url, 200)));
+                            lines.push(format!("- image: {}", truncate_text_to_width(url, 200)));
                         } else {
                             lines.push("- image".to_string());
                         }
@@ -2245,7 +2245,7 @@ pub fn summarize_mcp_output(output: &str) -> McpOutputSummary {
                             .or_else(|| block.get("url"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("<resource>");
-                        lines.push(format!("- resource: {}", truncate_text(uri, 200)));
+                        lines.push(format!("- resource: {}", truncate_text_to_width(uri, 200)));
                     }
                     other => {
                         lines.push(format!("- {other} content"));
@@ -5046,6 +5046,29 @@ mod tests {
             summary,
             "path: <82 chars>",
             "wide path should be summarized before it can overflow a tool header"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_output_truncates_text_blocks_by_display_width() {
+        let output = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "\u{8f93}\u{51fa}".repeat(120)
+            }]
+        })
+        .to_string();
+        let summary = super::summarize_mcp_output(&output)
+            .content
+            .expect("content");
+
+        assert!(
+            UnicodeWidthStr::width(summary.as_str()) <= "- text: ".len() + 200,
+            "MCP text summary overflowed display budget: {summary:?}"
+        );
+        assert!(
+            summary.contains(history_ellipsis()),
+            "long MCP text summary should expose truncation: {summary:?}"
         );
     }
 
