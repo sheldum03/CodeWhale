@@ -1489,6 +1489,11 @@ fn render_config_editor_value_line(
     Line::from(spans)
 }
 
+fn truncate_labeled_value(label: &str, value: &str, max_width: usize) -> String {
+    let label_width = UnicodeWidthStr::width(label);
+    truncate_view_text(value, max_width.saturating_sub(label_width))
+}
+
 impl ModalView for ConfigView {
     fn kind(&self) -> ModalKind {
         ModalKind::Config
@@ -1653,15 +1658,21 @@ impl ModalView for ConfigView {
                 Span::styled("Scope: ", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw(edit.scope.label()),
             ]));
+            let current_value = truncate_labeled_value(
+                "Current: ",
+                &edit.original_value,
+                usize::from(inner.width),
+            );
             lines.push(Line::from(vec![
                 Span::styled("Current: ", Style::default().fg(self.ui_theme.text_muted)),
-                Span::raw(truncate_view_text(&edit.original_value, 60)),
+                Span::raw(current_value),
             ]));
             lines.push(Line::from(""));
             lines.push(render_config_editor_value_line(edit, self.ui_theme));
             lines.push(Line::from(""));
             let hint = config_hint_for_key(&edit.key);
             if !hint.is_empty() {
+                let hint = truncate_labeled_value("Hint: ", hint, usize::from(inner.width));
                 lines.push(Line::from(vec![
                     Span::styled("Hint: ", Style::default().fg(self.ui_theme.text_muted)),
                     Span::raw(hint),
@@ -2780,6 +2791,21 @@ mod tests {
 
         assert_eq!(UnicodeWidthStr::width(padded.as_str()), 6);
         assert!(padded.starts_with("路径"));
+    }
+
+    #[test]
+    fn truncate_labeled_value_uses_remaining_display_width() {
+        let repeated = "界".repeat(20);
+        let value = truncate_labeled_value("Current: ", &repeated, 16);
+
+        assert_eq!(
+            UnicodeWidthStr::width(value.as_str()) + UnicodeWidthStr::width("Current: "),
+            16
+        );
+        assert!(
+            value.is_char_boundary(value.len()),
+            "value must not split UTF-8 codepoints: {value:?}"
+        );
     }
 
     #[test]
