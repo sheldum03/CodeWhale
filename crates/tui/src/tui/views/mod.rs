@@ -520,6 +520,31 @@ impl ShellControlChoice {
     }
 }
 
+fn render_shell_control_option_line(
+    selected_choice: ShellControlChoice,
+    choice: ShellControlChoice,
+    key: &'static str,
+    label: &'static str,
+    ui_theme: UiTheme,
+) -> ratatui::text::Line<'static> {
+    use ratatui::text::{Line, Span};
+
+    let selected = selected_choice == choice;
+    let style = if selected {
+        Style::default()
+            .fg(ui_theme.selection_text)
+            .bg(ui_theme.selection_bg)
+    } else {
+        Style::default().fg(ui_theme.text_body)
+    };
+
+    Line::from(vec![
+        Span::styled(if selected { "> " } else { "  " }, style),
+        Span::styled(pad_view_text(key, 3), style.bold()),
+        Span::styled(label, style),
+    ])
+}
+
 pub struct ShellControlView {
     selected: ShellControlChoice,
     ui_theme: UiTheme,
@@ -592,37 +617,25 @@ impl ModalView for ShellControlView {
 
         Clear.render(popup_area, buf);
 
-        let option_line = |choice: ShellControlChoice, key: &'static str, label: &'static str| {
-            let selected = self.selected == choice;
-            let style = if selected {
-                Style::default()
-                    .fg(self.ui_theme.selection_text)
-                    .bg(self.ui_theme.selection_bg)
-            } else {
-                Style::default().fg(self.ui_theme.text_body)
-            };
-            Line::from(vec![
-                Span::styled(if selected { "> " } else { "  " }, style),
-                Span::styled(format!("{key:<3}"), style.bold()),
-                Span::styled(label, style),
-            ])
-        };
-
         let lines = vec![
             Line::from(Span::styled(
                 "Foreground shell command is still running.",
                 Style::default().fg(self.ui_theme.text_body),
             )),
             Line::from(""),
-            option_line(
+            render_shell_control_option_line(
+                self.selected,
                 ShellControlChoice::Background,
                 "B",
                 "Background - detach and keep the command running",
+                self.ui_theme,
             ),
-            option_line(
+            render_shell_control_option_line(
+                self.selected,
                 ShellControlChoice::Cancel,
                 "C",
                 "Cancel - stop the command and interrupt this turn",
+                self.ui_theme,
             ),
         ];
 
@@ -2397,8 +2410,9 @@ mod tests {
     use super::{
         ConfigListItem, ConfigSection, ConfigView, ModalKind, ModalView, ShellControlView,
         ViewAction, ViewEvent, ViewStack, config_editor_move_hint, modal_summary_separator,
-        pad_view_text, render_ascii_views_modal_chrome, render_subagent_row, scroll_nav_hint,
-        subagent_steps_suffix, subagent_view_agents, truncate_view_text,
+        pad_view_text, render_ascii_views_modal_chrome, render_shell_control_option_line,
+        render_subagent_row, scroll_nav_hint, subagent_steps_suffix, subagent_view_agents,
+        truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
@@ -2474,6 +2488,30 @@ mod tests {
             prefix.is_char_boundary(prefix.len()),
             "prefix should end on a valid char boundary: {prefix:?}"
         );
+    }
+
+    #[test]
+    fn shell_control_option_key_padding_uses_display_width() {
+        let line = render_shell_control_option_line(
+            super::ShellControlChoice::Background,
+            super::ShellControlChoice::Background,
+            "\u{8fd4}",
+            "return to foreground",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let key_column = line.spans[1].content.as_ref();
+
+        assert_eq!(
+            UnicodeWidthStr::width(key_column),
+            3,
+            "shell control key column should keep visual width: {plain:?}"
+        );
+        assert!(plain.starts_with("> \u{8fd4} "));
     }
 
     struct ConfigSettingsEnvGuard {
