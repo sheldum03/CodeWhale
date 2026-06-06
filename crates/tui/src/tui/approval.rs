@@ -35,6 +35,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Determines when tool executions require user approval
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -688,7 +689,7 @@ fn truncate_params_value(value: &Value, max_len: usize) -> Value {
         Value::String(text) => Value::String(truncate_string_value(text, max_len)),
         other => {
             let rendered = other.to_string();
-            if rendered.chars().count() > max_len {
+            if UnicodeWidthStr::width(rendered.as_str()) > max_len {
                 Value::String(truncate_string_value(&rendered, max_len))
             } else {
                 other.clone()
@@ -698,11 +699,28 @@ fn truncate_params_value(value: &Value, max_len: usize) -> Value {
 }
 
 fn truncate_string_value(value: &str, max_len: usize) -> String {
-    if value.chars().count() <= max_len {
+    if UnicodeWidthStr::width(value) <= max_len {
         return value.to_string();
     }
-    let truncated: String = value.chars().take(max_len).collect();
-    format!("{truncated}...")
+
+    let ellipsis = "...";
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if ellipsis_width > max_len {
+        return ".".repeat(max_len);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in value.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width + ellipsis_width > max_len {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str(ellipsis);
+    out
 }
 
 // ============================================================================
@@ -933,6 +951,7 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyModifiers};
     use serde_json::json;
+    use unicode_width::UnicodeWidthStr;
 
     fn create_key_event(code: KeyCode) -> KeyEvent {
         KeyEvent {
@@ -1100,6 +1119,42 @@ mod tests {
         let display = request.params_display();
         assert!(display.len() < 250);
         assert!(display.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_approval_param_truncation_uses_display_width() {
+        let truncated = truncate_string_value(&"\u{53c2}\u{6570}".repeat(40), 40);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 40,
+            "truncated approval param overflowed display width: {truncated:?}"
+        );
+        assert!(
+            truncated.ends_with("..."),
+            "truncated approval param should expose ellipsis: {truncated:?}"
+        );
+    }
+
+    #[test]
+    fn test_approval_request_params_display_truncates_wide_content() {
+        let params = json!({
+            "path": "src/main.rs",
+            "content": "\u{53c2}\u{6570}".repeat(120)
+        });
+        let request = ApprovalRequest::new(
+            "test-id",
+            "write_file",
+            "Write a file to disk",
+            &params,
+            "test_key",
+        );
+
+        let display = request.params_display();
+        assert!(display.contains("src/main.rs"));
+        assert!(
+            display.contains("..."),
+            "wide approval params should be visibly truncated: {display:?}"
+        );
     }
 
     #[test]
