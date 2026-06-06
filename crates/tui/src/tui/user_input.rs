@@ -56,6 +56,7 @@ fn push_option_lines(
     label: String,
     description: String,
     ui_theme: UiTheme,
+    max_width: usize,
 ) {
     let row_style = if selected {
         Style::default()
@@ -73,11 +74,11 @@ fn push_option_lines(
     let prefix = if selected { ">" } else { " " };
 
     lines.push(Line::from(Span::styled(
-        format!("{prefix} {number}) {label}"),
+        fit_text(&format!("{prefix} {number}) {label}"), max_width),
         row_style,
     )));
     lines.push(Line::from(Span::styled(
-        format!("    {description}"),
+        fit_text(&format!("    {description}"), max_width),
         detail_style,
     )));
 }
@@ -363,6 +364,7 @@ impl ModalView for UserInputView {
                 option.label.clone(),
                 option.description.clone(),
                 self.ui_theme,
+                content_width,
             );
         }
 
@@ -375,6 +377,7 @@ impl ModalView for UserInputView {
             "Other".to_string(),
             "Type a custom response".to_string(),
             self.ui_theme,
+            content_width,
         );
 
         if self.mode == InputMode::OtherInput {
@@ -608,6 +611,34 @@ mod tests {
         assert!(rendered.contains("Need one more pass"));
         assert!(rendered.contains("Enter"));
         assert!(rendered.contains("submit"));
+    }
+
+    #[test]
+    fn option_lines_truncate_to_display_width() {
+        let mut lines = Vec::new();
+        push_option_lines(
+            &mut lines,
+            true,
+            1,
+            "\u{9009}\u{9879}\u{6807}\u{7b7e}".repeat(12),
+            "\u{9009}\u{9879}\u{63cf}\u{8ff0}".repeat(12),
+            palette::DEEPSEEK_SHELL_UI_THEME,
+            24,
+        );
+
+        assert_eq!(lines.len(), 2);
+        for line in lines {
+            let plain = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+            assert!(
+                plain.is_char_boundary(plain.len()),
+                "option line must not split UTF-8 codepoints: {plain:?}"
+            );
+        }
     }
 
     #[test]
