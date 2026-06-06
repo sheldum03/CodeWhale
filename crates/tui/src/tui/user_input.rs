@@ -4,21 +4,23 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Widget, Wrap};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tools::user_input::{
     UserInputAnswer, UserInputQuestion, UserInputRequest, UserInputResponse,
 };
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 
-fn modal_block(title: &str) -> Block<'static> {
+fn modal_block(title: &str, ui_theme: UiTheme) -> Block<'static> {
     Block::default()
         .title(Line::from(vec![Span::styled(
             title.to_string(),
-            Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
+            Style::default().fg(ui_theme.accent_primary).bold(),
         )]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::BORDER_COLOR))
+        .border_style(Style::default().fg(ui_theme.border))
         .padding(Padding::uniform(1))
 }
 
@@ -53,19 +55,20 @@ fn push_option_lines(
     number: usize,
     label: String,
     description: String,
+    ui_theme: UiTheme,
 ) {
     let row_style = if selected {
         Style::default()
-            .fg(palette::SELECTION_TEXT)
-            .bg(palette::SELECTION_BG)
+            .fg(ui_theme.selection_text)
+            .bg(ui_theme.selection_bg)
             .bold()
     } else {
-        Style::default().fg(palette::TEXT_PRIMARY)
+        Style::default().fg(ui_theme.text_body)
     };
     let detail_style = if selected {
         row_style
     } else {
-        Style::default().fg(palette::TEXT_MUTED)
+        Style::default().fg(ui_theme.text_muted)
     };
     let prefix = if selected { ">" } else { " " };
 
@@ -94,6 +97,7 @@ pub struct UserInputView {
     mode: InputMode,
     other_input: String,
     answers: Vec<UserInputAnswer>,
+    ui_theme: UiTheme,
 }
 
 impl UserInputView {
@@ -106,7 +110,14 @@ impl UserInputView {
             mode: InputMode::Selecting,
             other_input: String::new(),
             answers: Vec::new(),
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn current_question(&self) -> &UserInputQuestion {
@@ -267,22 +278,22 @@ impl ModalView for UserInputView {
         let mut lines: Vec<Line> = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             "Action required",
-            Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+            Style::default().fg(self.ui_theme.accent_primary).bold(),
         )]));
         lines.push(Line::from(vec![
             Span::styled(
                 question.header.clone(),
-                Style::default().fg(palette::TEXT_PRIMARY).bold(),
+                Style::default().fg(self.ui_theme.text_body).bold(),
             ),
             Span::styled(
                 format!("  Question {} of {}", self.question_index + 1, total),
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             ),
         ]));
         lines.push(Line::from(""));
         lines.push(Line::from(vec![Span::styled(
             question.question.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY).bold(),
+            Style::default().fg(self.ui_theme.text_body).bold(),
         )]));
         lines.push(Line::from(""));
 
@@ -294,6 +305,7 @@ impl ModalView for UserInputView {
                 number,
                 option.label.clone(),
                 option.description.clone(),
+                self.ui_theme,
             );
         }
 
@@ -305,6 +317,7 @@ impl ModalView for UserInputView {
             other_number,
             "Other".to_string(),
             "Type a custom response".to_string(),
+            self.ui_theme,
         );
 
         if self.mode == InputMode::OtherInput {
@@ -312,7 +325,7 @@ impl ModalView for UserInputView {
             lines.push(Line::from(vec![
                 Span::styled(
                     "> Custom response:",
-                    Style::default().fg(palette::TEXT_PRIMARY).bold(),
+                    Style::default().fg(self.ui_theme.text_body).bold(),
                 ),
                 Span::raw(" "),
                 Span::styled(
@@ -321,7 +334,7 @@ impl ModalView for UserInputView {
                     } else {
                         self.other_input.clone()
                     },
-                    Style::default().fg(palette::DEEPSEEK_BLUE),
+                    Style::default().fg(self.ui_theme.accent_primary),
                 ),
             ]));
         }
@@ -329,11 +342,11 @@ impl ModalView for UserInputView {
         lines.push(Line::from(""));
         if self.mode == InputMode::OtherInput {
             lines.push(Line::from(vec![
-                Span::styled("Enter", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-                Span::styled(" submit", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Enter", Style::default().fg(self.ui_theme.accent_primary).bold()),
+                Span::styled(" submit", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw("  "),
-                Span::styled("Esc", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-                Span::styled(" back", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Esc", Style::default().fg(self.ui_theme.accent_primary).bold()),
+                Span::styled(" back", Style::default().fg(self.ui_theme.text_muted)),
             ]));
         } else {
             let opt_count = self.option_count();
@@ -345,30 +358,125 @@ impl ModalView for UserInputView {
             lines.push(Line::from(vec![
                 Span::styled(
                     quick_pick_label,
-                    Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                    Style::default().fg(self.ui_theme.accent_primary).bold(),
                 ),
-                Span::styled(" quick pick", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled(" quick pick", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw("  "),
-                Span::styled("Up/Down", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-                Span::styled(" move", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Up/Down", Style::default().fg(self.ui_theme.accent_primary).bold()),
+                Span::styled(" move", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw("  "),
-                Span::styled("Enter", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-                Span::styled(" confirm", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Enter", Style::default().fg(self.ui_theme.accent_primary).bold()),
+                Span::styled(" confirm", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw("  "),
-                Span::styled("Esc", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-                Span::styled(" cancel", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Esc", Style::default().fg(self.ui_theme.accent_primary).bold()),
+                Span::styled(" cancel", Style::default().fg(self.ui_theme.text_muted)),
             ]));
         }
 
-        let paragraph = Paragraph::new(lines)
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true })
-            .block(modal_block(&header));
-
         let popup_area = centered_rect(82, 68, area);
         render_modal_chrome(area, popup_area, buf);
-        paragraph.render(popup_area, buf);
+        if palette::ascii_ui_enabled() {
+            let inner = render_ascii_user_input_chrome(popup_area, buf, &header, self.ui_theme);
+            Paragraph::new(lines)
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
+        } else {
+            Paragraph::new(lines)
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: true })
+                .block(modal_block(&header, self.ui_theme))
+                .render(popup_area, buf);
+        }
     }
+}
+
+fn render_ascii_user_input_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .bold();
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -395,6 +503,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 mod tests {
     use super::*;
     use crate::tools::user_input::{UserInputOption, UserInputQuestion, UserInputRequest};
+    use unicode_width::UnicodeWidthStr;
 
     fn render_view(view: &UserInputView, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
@@ -452,5 +561,44 @@ mod tests {
         assert!(rendered.contains("Need one more pass"));
         assert!(rendered.contains("Enter"));
         assert!(rendered.contains("submit"));
+    }
+
+    #[test]
+    fn ascii_user_input_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_user_input_chrome(
+            area,
+            &mut buf,
+            " Confirm (1/1) ",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_title_prefix_respects_cjk_display_width() {
+        let title = ascii_prefix(" 确认后续处理方案 (1/1) ", 12);
+
+        assert!(
+            UnicodeWidthStr::width(title.as_str()) <= 12,
+            "title overflowed display width: {title:?}"
+        );
+        assert!(
+            title.is_char_boundary(title.len()),
+            "title must not split a UTF-8 codepoint: {title:?}"
+        );
     }
 }

@@ -37,6 +37,69 @@ const RECENT_TOOL_SCAN_LIMIT: usize = 24;
 const ACTIVE_TOOL_COMPLETED_ROW_TTL: Duration = Duration::from_secs(8);
 const ACTIVE_TOOL_STALE_RUNNING_ROW_TTL: Duration = Duration::from_secs(600);
 
+fn sidebar_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " | "
+    } else {
+        " \u{00B7} "
+    }
+}
+
+fn sidebar_goal_icon(completed: bool) -> &'static str {
+    match (completed, palette::ascii_ui_enabled()) {
+        (true, true) => "+",
+        (true, false) => "\u{2713}",
+        (false, true) => "*",
+        (false, false) => "\u{25C6}",
+    }
+}
+
+fn sidebar_completed_mark() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "[x]"
+    } else {
+        "[\u{2713}]"
+    }
+}
+
+fn sidebar_missing_value() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{2014}"
+    }
+}
+
+fn sidebar_task_status_marker(status: &str) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        return match status {
+            "queued" => "[ ]",
+            "running" => "[~]",
+            "completed" => "[x]",
+            "failed" => "[!]",
+            "canceled" => "[-]",
+            _ => "[?]",
+        };
+    }
+    match status {
+        "queued" => "[\u{25CB}]",
+        "running" => "[\u{25D0}]",
+        "completed" => "[\u{2713}]",
+        "failed" => "[\u{2717}]",
+        "canceled" => "[\u{2298}]",
+        _ => "[?]",
+    }
+}
+
+fn sidebar_progress_bar(filled: usize, width: usize) -> String {
+    let empty = width.saturating_sub(filled);
+    if palette::ascii_ui_enabled() {
+        format!("[{}{}]", "#".repeat(filled), ".".repeat(empty))
+    } else {
+        format!("[{}{}]", "\u{2588}".repeat(filled), "\u{2591}".repeat(empty))
+    }
+}
+
 pub fn render_sidebar(f: &mut Frame, area: Rect, app: &mut App) {
     // Clear hover state at the start of each render
     app.sidebar_hover = SidebarHoverState::default();
@@ -303,10 +366,10 @@ fn work_panel_lines(
     summary: &SidebarWorkSummary,
     content_width: usize,
     max_rows: usize,
-    palette_mode: palette::PaletteMode,
+    theme_id: palette::ThemeId,
     ui_theme: &palette::UiTheme,
 ) -> Vec<Line<'static>> {
-    let theme = Theme::for_palette_mode(palette_mode);
+    let theme = Theme::from_ui_theme(theme_id, *ui_theme);
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(max_rows.max(4));
 
     push_work_goal_lines(summary, content_width, max_rows, &mut lines, ui_theme);
@@ -345,7 +408,7 @@ fn push_work_goal_lines(
         return;
     }
 
-    let icon = if summary.goal_completed { "✓" } else { "◆" };
+    let icon = sidebar_goal_icon(summary.goal_completed);
     let status_style = if summary.goal_completed {
         Style::default()
             .fg(theme.success)
@@ -391,12 +454,7 @@ fn push_work_goal_lines(
         };
         let bar_width = content_width.min(20);
         let filled = ((pct / 100.0) * bar_width as f64) as usize;
-        let bar = format!(
-            "[{}{}] {:.0}%",
-            "█".repeat(filled),
-            "░".repeat(bar_width.saturating_sub(filled)),
-            pct
-        );
+        let bar = format!("{} {:.0}%", sidebar_progress_bar(filled, bar_width), pct);
         lines.push(Line::from(Span::styled(
             truncate_line_to_width(
                 &format!("tokens: {}/{} {}", summary.tokens_used, budget, bar),
@@ -454,7 +512,7 @@ fn push_work_checklist_lines(
         let (prefix, color) = match item.status {
             TodoStatus::Pending => ("[ ]", theme.text_muted),
             TodoStatus::InProgress => ("[~]", theme.warning),
-            TodoStatus::Completed => ("[✓]", theme.success),
+            TodoStatus::Completed => (sidebar_completed_mark(), theme.success),
         };
         let text = format!("{prefix} #{} {}", item.id, item.content);
         lines.push(Line::from(Span::styled(
@@ -545,7 +603,7 @@ fn push_work_strategy_lines(
         let (prefix, color) = match step.status {
             StepStatus::Pending => ("[ ]", theme.plan_pending_color),
             StepStatus::InProgress => ("[~]", theme.plan_in_progress_color),
-            StepStatus::Completed => ("[✓]", theme.plan_completed_color),
+            StepStatus::Completed => (sidebar_completed_mark(), theme.plan_completed_color),
         };
         let mut text = format!("{prefix} {}", step.text);
         if !step.elapsed.is_empty() {
@@ -583,7 +641,7 @@ fn render_sidebar_work(f: &mut Frame, area: Rect, app: &mut App) {
         &summary,
         content_width.max(1),
         usable_rows,
-        app.ui_theme.mode,
+        app.theme_id,
         &app.ui_theme,
     );
 
@@ -716,7 +774,10 @@ fn task_panel_lines(app: &App, content_width: usize, max_rows: usize) -> Vec<Lin
         && app.sidebar_focus == SidebarFocus::Tasks
     {
         lines.push(Line::from(Span::styled(
-            "y → copy turn id  ·  Y → copy full status",
+            format!(
+                "y -> copy turn id{}Y -> copy full status",
+                sidebar_separator()
+            ),
             Style::default()
                 .fg(theme.text_dim)
                 .add_modifier(ratatui::style::Modifier::ITALIC),
@@ -746,17 +807,18 @@ fn push_sidebar_label_theme(lines: &mut Vec<Line<'static>>, label: &str, theme: 
 }
 
 fn background_task_labels(task: &TaskPanelEntry, duration: &str) -> (String, String) {
+    let marker = sidebar_task_status_marker(task.status.as_str());
     if let Some(command) = task.prompt_summary.strip_prefix("shell: ") {
         let command = concise_shell_command_label(command, 96);
         return (
-            format!("{} {} {}", task.status, command, duration),
-            format!("{} \u{00B7} command", task.id),
+            format!("{marker} {} {} {}", task.status, command, duration),
+            format!("{}{}command", task.id, sidebar_separator()),
         );
     }
 
     (
         format!(
-            "{} {} {}",
+            "{} {marker} {} {}",
             truncate_line_to_width(&task.id, 10),
             task.status,
             duration
@@ -838,7 +900,7 @@ fn collapsed_stale_running_row(rows: Vec<SidebarToolRow>) -> SidebarToolRow {
             format!("run x{count}")
         },
         status: ToolStatus::Running,
-        summary: format!("long-running · {first_summary}"),
+        summary: format!("long-running{}{}", sidebar_separator(), first_summary),
         duration_ms: (oldest_ms > 0).then_some(oldest_ms),
     }
 }
@@ -1029,7 +1091,8 @@ fn shell_summary_for_sidebar(
 ) -> String {
     if status == ToolStatus::Failed && looks_like_pending_ci(command, output_summary, output) {
         return format!(
-            "Waiting for CI \u{00B7} {} details",
+            "Waiting for CI{}{} details",
+            sidebar_separator(),
             crate::tui::key_shortcuts::tool_details_shortcut_label()
         );
     }
@@ -1085,7 +1148,7 @@ fn failure_summary_with_hint(summary: &str) -> String {
     } else if summary.contains(&hint) {
         summary.to_string()
     } else {
-        format!("{summary} \u{00B7} {hint}")
+        format!("{summary}{}{hint}", sidebar_separator())
     }
 }
 
@@ -1308,7 +1371,9 @@ fn editorial_tool_rows(
             let command = row.name.clone();
             row.name = "Waiting for CI".to_string();
             row.summary = format!(
-                "{command} \u{00B7} {count} polls collapsed \u{00B7} {} details",
+                "{command}{}{count} polls collapsed{}{} details",
+                sidebar_separator(),
+                sidebar_separator(),
                 crate::tui::key_shortcuts::tool_details_shortcut_label()
             );
             row.status = ToolStatus::Running;
@@ -1323,7 +1388,7 @@ fn editorial_tool_rows(
     for (order, mut row, count, key) in shell_wait_groups {
         if count > 1 {
             row.summary = compact_join([
-                format!("{key} \u{00B7} {count} waits collapsed"),
+                format!("{key}{}{count} waits collapsed", sidebar_separator()),
                 row.summary.clone(),
             ]);
         }
@@ -1431,7 +1496,7 @@ fn compact_join(parts: impl IntoIterator<Item = String>) -> String {
             out.push(part.to_string());
         }
     }
-    out.join(" · ")
+    out.join(sidebar_separator())
 }
 
 fn first_nonempty_line(text: &str) -> &str {
@@ -1447,7 +1512,7 @@ fn tool_status_marker(
 ) -> (&'static str, ratatui::style::Color) {
     match status {
         ToolStatus::Running => ("[~]", theme.warning),
-        ToolStatus::Success => ("[✓]", theme.success),
+        ToolStatus::Success => (sidebar_completed_mark(), theme.success),
         ToolStatus::Failed => ("[!]", theme.error_fg),
     }
 }
@@ -1678,7 +1743,7 @@ pub fn subagent_panel_lines(
             .iter()
             .map(|(role, count)| format!("{count} {role}"))
             .collect();
-        let role_line = mix.join(" \u{00B7} ");
+        let role_line = mix.join(sidebar_separator());
         lines.push(Line::from(Span::styled(
             truncate_line_to_width(&role_line, content_width.max(1)),
             Style::default().fg(theme.text_dim),
@@ -1722,7 +1787,7 @@ pub fn subagent_panel_lines(
             format!(
                 "  {}",
                 truncate_line_to_width(
-                    &detail_parts.join(" · "),
+                    &detail_parts.join(sidebar_separator()),
                     content_width.saturating_sub(2).max(1)
                 )
             ),
@@ -1749,7 +1814,7 @@ fn agent_status_marker(
 ) -> (&'static str, ratatui::style::Color) {
     match status {
         "running" => ("[~]", theme.warning),
-        "done" => ("[✓]", theme.success),
+        "done" => (sidebar_completed_mark(), theme.success),
         "failed" => ("[!]", theme.error_fg),
         "canceled" | "interrupted" => ("[-]", theme.text_muted),
         _ => ("[ ]", theme.text_muted),
@@ -1799,12 +1864,7 @@ fn render_context_panel(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let bar_width = content_width.min(20);
     let filled = ((pct / 100.0) * bar_width as f64) as usize;
-    let bar = format!(
-        "[{}{}] {:.0}%",
-        "█".repeat(filled),
-        "░".repeat(bar_width.saturating_sub(filled)),
-        pct
-    );
+    let bar = format!("{} {:.0}%", sidebar_progress_bar(filled, bar_width), pct);
     lines.push(Line::from(Span::styled(
         format!(
             "context: {}/{} tokens  {}",
@@ -1874,7 +1934,7 @@ fn render_context_panel(f: &mut Frame, area: Rect, app: &mut App) {
                     format!("{bytes} B")
                 }
             })
-            .unwrap_or_else(|_| "—".to_string());
+            .unwrap_or_else(|_| sidebar_missing_value().to_string());
         lines.push(Line::from(Span::styled(
             format!("memory: {} ({})", app.memory_path.display(), size_hint),
             Style::default().fg(theme.text_muted),
@@ -1908,7 +1968,7 @@ fn render_sidebar_section(
         return;
     }
 
-    let theme = Theme::for_palette_mode(app.ui_theme.mode);
+    let theme = Theme::from_ui_theme(app.theme_id, app.ui_theme);
 
     // Record hover metadata for mouse tooltip support.
     let padding = theme.section_padding;
@@ -1967,12 +2027,13 @@ mod tests {
         AutoSidebarState, SidebarAgentRow, SidebarHoverSection, SidebarHoverState,
         SidebarSubagentSummary, SidebarToolRow, SidebarWorkChecklistItem, SidebarWorkStrategyStep,
         SidebarWorkSummary, ToolRowOrder, auto_sidebar_panels, editorial_tool_rows,
-        normalize_activity_text, sidebar_work_summary, subagent_panel_lines, task_panel_lines,
-        work_panel_empty_hint, work_panel_lines,
+        normalize_activity_text, sidebar_completed_mark, sidebar_goal_icon,
+        sidebar_progress_bar, sidebar_separator, sidebar_task_status_marker, sidebar_work_summary,
+        subagent_panel_lines, task_panel_lines, work_panel_empty_hint, work_panel_lines,
     };
     use crate::config::Config;
     use crate::palette;
-    use crate::palette::PaletteMode;
+    use crate::test_support::EnvVarGuard;
     use crate::tools::plan::StepStatus;
     use crate::tools::todo::TodoStatus;
     use crate::tui::active_cell::ActiveCell;
@@ -2007,6 +2068,35 @@ mod tests {
             initial_input: None,
         };
         App::new(options, &Config::default())
+    }
+
+    #[test]
+    fn sidebar_symbol_helpers_follow_ascii_mode() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(sidebar_separator(), " | ");
+            assert_eq!(sidebar_goal_icon(true), "+");
+            assert_eq!(sidebar_goal_icon(false), "*");
+            assert_eq!(sidebar_completed_mark(), "[x]");
+            assert_eq!(sidebar_missing_value(), "-");
+            assert_eq!(sidebar_task_status_marker("queued"), "[ ]");
+            assert_eq!(sidebar_task_status_marker("running"), "[~]");
+            assert_eq!(sidebar_task_status_marker("completed"), "[x]");
+            assert_eq!(sidebar_task_status_marker("failed"), "[!]");
+            assert_eq!(sidebar_task_status_marker("canceled"), "[-]");
+            assert_eq!(sidebar_progress_bar(2, 5), "[##...]");
+        } else {
+            assert_eq!(sidebar_separator(), " \u{00B7} ");
+            assert_eq!(sidebar_goal_icon(true), "\u{2713}");
+            assert_eq!(sidebar_goal_icon(false), "\u{25C6}");
+            assert_eq!(sidebar_completed_mark(), "[\u{2713}]");
+            assert_eq!(sidebar_missing_value(), "\u{2014}");
+            assert_eq!(sidebar_task_status_marker("queued"), "[\u{25CB}]");
+            assert_eq!(sidebar_task_status_marker("running"), "[\u{25D0}]");
+            assert_eq!(sidebar_task_status_marker("completed"), "[\u{2713}]");
+            assert_eq!(sidebar_task_status_marker("failed"), "[\u{2717}]");
+            assert_eq!(sidebar_task_status_marker("canceled"), "[\u{2298}]");
+            assert_eq!(sidebar_progress_bar(2, 5), "[\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}]");
+        }
     }
 
     fn sidebar_tool_row(name: &str, status: ToolStatus) -> SidebarToolRow {
@@ -2172,7 +2262,7 @@ mod tests {
             &summary,
             80,
             16,
-            PaletteMode::Dark,
+            palette::ThemeId::Whale,
             &palette::UI_THEME,
         ));
 
@@ -2187,6 +2277,72 @@ mod tests {
         assert!(
             !text.iter().any(|line| line.contains("50% complete")),
             "strategy progress must not render as a second progress bar when checklist exists: {text:?}"
+        );
+    }
+
+    #[test]
+    fn work_panel_uses_deepseek_shell_strategy_progress_color() {
+        let summary = SidebarWorkSummary {
+            strategy_steps: vec![
+                SidebarWorkStrategyStep {
+                    text: "Implement theme".to_string(),
+                    status: StepStatus::Completed,
+                    elapsed: String::new(),
+                },
+                SidebarWorkStrategyStep {
+                    text: "Verify render".to_string(),
+                    status: StepStatus::InProgress,
+                    elapsed: String::new(),
+                },
+            ],
+            ..SidebarWorkSummary::default()
+        };
+
+        let lines = work_panel_lines(
+            &summary,
+            80,
+            16,
+            palette::ThemeId::DeepSeekShell,
+            &palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(
+            lines[0].spans[1].style.fg,
+            Some(palette::DEEPSEEK_SHELL_UI_THEME.status_working)
+        );
+    }
+
+    #[test]
+    fn work_panel_uses_runtime_ui_theme_strategy_progress_color() {
+        let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        ui_theme.status_working = ratatui::style::Color::Indexed(42);
+        let summary = SidebarWorkSummary {
+            strategy_steps: vec![
+                SidebarWorkStrategyStep {
+                    text: "Implement theme".to_string(),
+                    status: StepStatus::Completed,
+                    elapsed: String::new(),
+                },
+                SidebarWorkStrategyStep {
+                    text: "Verify render".to_string(),
+                    status: StepStatus::InProgress,
+                    elapsed: String::new(),
+                },
+            ],
+            ..SidebarWorkSummary::default()
+        };
+
+        let lines = work_panel_lines(
+            &summary,
+            80,
+            16,
+            palette::ThemeId::DeepSeekShell,
+            &ui_theme,
+        );
+
+        assert_eq!(
+            lines[0].spans[1].style.fg,
+            Some(ratatui::style::Color::Indexed(42))
         );
     }
 
@@ -2214,7 +2370,7 @@ mod tests {
             &summary,
             80,
             6,
-            PaletteMode::Dark,
+            palette::ThemeId::Whale,
             &palette::UI_THEME,
         ));
 
@@ -2236,7 +2392,7 @@ mod tests {
             &SidebarWorkSummary::default(),
             80,
             16,
-            PaletteMode::Dark,
+            palette::ThemeId::Whale,
             &palette::UI_THEME,
         ));
         assert!(
@@ -2252,7 +2408,7 @@ mod tests {
             &summary,
             80,
             16,
-            PaletteMode::Dark,
+            palette::ThemeId::Whale,
             &palette::UI_THEME,
         ));
         assert!(
@@ -2403,7 +2559,8 @@ mod tests {
             "recent section missing: {text:?}"
         );
         assert!(
-            text.iter().any(|line| line.contains("[✓] read_file")),
+            text.iter()
+                .any(|line| line.contains(&format!("{} read_file", sidebar_completed_mark()))),
             "recent read_file row missing: {text:?}"
         );
     }
@@ -2432,7 +2589,9 @@ mod tests {
         let text = lines_to_text(&task_panel_lines(&app, 64, 8));
 
         assert!(
-            !text.iter().any(|line| line.contains("[✓] read_file")),
+            !text
+                .iter()
+                .any(|line| line.contains(&format!("{} read_file", sidebar_completed_mark()))),
             "expired completed active row should leave the sidebar: {text:?}"
         );
     }
@@ -2470,7 +2629,8 @@ mod tests {
         let text = lines_to_text(&task_panel_lines(&app, 64, 8));
 
         assert!(
-            text.iter().any(|line| line.contains("[✓] read_file")),
+            text.iter()
+                .any(|line| line.contains(&format!("{} read_file", sidebar_completed_mark()))),
             "fresh completed active row should linger briefly: {text:?}"
         );
     }
@@ -2555,6 +2715,7 @@ mod tests {
 
     #[test]
     fn tasks_panel_puts_background_shell_command_on_primary_row() {
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
         let mut app = create_test_app();
         app.task_panel.push(TaskPanelEntry {
             id: "shell_33a08c3c".to_string(),
@@ -2568,12 +2729,37 @@ mod tests {
 
         assert!(
             text.iter()
-                .any(|line| line.contains("running cargo test --workspace --all-features")),
+                .any(|line| line.contains("[~] running cargo test --workspace --all-features")),
             "background shell headline should show the command, not only the shell id: {text:?}"
         );
         assert!(
             text.iter().any(|line| line.contains("shell_33a08c3c")),
             "shell id should remain available as detail: {text:?}"
+        );
+    }
+
+    #[test]
+    fn tasks_panel_marks_background_task_status_in_ascii_mode() {
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = create_test_app();
+        app.task_panel.push(TaskPanelEntry {
+            id: "task_12345678".to_string(),
+            status: "failed".to_string(),
+            prompt_summary: "Fix visual sidebar status".to_string(),
+            duration_ms: Some(42_000),
+        });
+
+        let text = lines_to_text(&task_panel_lines(&app, 96, 8));
+
+        assert!(
+            text.iter()
+                .any(|line| line.contains("task_12345 [!] failed 42.0s")),
+            "background task row should include status marker: {text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|line| line.contains("Fix visual sidebar status")),
+            "background task summary should remain visible: {text:?}"
         );
     }
 
@@ -2623,7 +2809,9 @@ mod tests {
             .expect("failed grep row should stay visible");
         let read_group_index = text
             .iter()
-            .position(|line| line.contains("[✓] read_file x3"))
+            .position(|line| {
+                line.contains(&format!("{} read_file x3", sidebar_completed_mark()))
+            })
             .expect("repeated read_file rows should collapse");
 
         assert!(
@@ -2632,7 +2820,9 @@ mod tests {
         );
         assert_eq!(
             text.iter()
-                .filter(|line| line.contains("[✓] read_file"))
+                .filter(|line| {
+                    line.contains(&format!("{} read_file", sidebar_completed_mark()))
+                })
                 .count(),
             1,
             "read_file should render once after grouping: {text:?}"
@@ -2732,7 +2922,10 @@ mod tests {
 
         assert!(
             text.iter()
-                .any(|line| line.contains("[✓] cargo check 1.2s")),
+                .any(|line| line.contains(&format!(
+                    "{} cargo check 1.2s",
+                    sidebar_completed_mark()
+                ))),
             "status marker and duration should stay in the row label: {text:?}"
         );
         assert!(

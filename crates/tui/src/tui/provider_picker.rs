@@ -25,10 +25,20 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::{ApiProvider, Config, has_api_key_for, kimi_cli_credentials_present};
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
+
+fn provider_picker_nav_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " Up/Down "
+    } else {
+        " \u{2191}\u{2193} "
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -42,6 +52,7 @@ pub struct ProviderPickerView {
     selected_idx: usize,
     stage: Stage,
     api_key_input: String,
+    ui_theme: UiTheme,
 }
 
 impl ProviderPickerView {
@@ -61,7 +72,14 @@ impl ProviderPickerView {
             selected_idx,
             stage: Stage::List,
             api_key_input: String::new(),
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn move_up(&mut self) {
@@ -151,15 +169,15 @@ impl ProviderPickerView {
             .min(max_start)
     }
 
-    fn selected_row_style(fg: Color) -> Style {
+    fn selected_row_style(&self, fg: Color) -> Style {
         Style::default()
             .fg(fg)
-            .bg(palette::SURFACE_ELEVATED)
+            .bg(self.ui_theme.selection_bg)
             .add_modifier(Modifier::BOLD)
     }
 
-    fn selected_row_bg_style() -> Style {
-        Style::default().bg(palette::SURFACE_ELEVATED)
+    fn selected_row_bg_style(&self) -> Style {
+        Style::default().bg(self.ui_theme.selection_bg)
     }
 
     fn render_list(&self, area: Rect, buf: &mut Buffer) {
@@ -168,28 +186,40 @@ impl ProviderPickerView {
         } else {
             "set key"
         };
-        let outer = Block::default()
-            .title(Line::from(Span::styled(
-                " Provider ",
-                Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .title_bottom(Line::from(vec![
-                Span::styled(" ↑↓ ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("move "),
-                Span::styled(" Enter ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw(format!("{enter_action} ")),
-                Span::styled(" R ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("edit key "),
-                Span::styled(" Esc ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("cancel "),
-            ]))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default());
-        let inner = outer.inner(area);
-        outer.render(area, buf);
+        let inner = if palette::ascii_ui_enabled() {
+            let footer = format!(
+                "{}move Enter {enter_action} R edit key Esc cancel ",
+                provider_picker_nav_hint()
+            );
+            render_ascii_provider_picker_chrome(area, buf, " Provider ", &footer, self.ui_theme)
+        } else {
+            let outer = Block::default()
+                .title(Line::from(Span::styled(
+                    " Provider ",
+                    Style::default()
+                        .fg(self.ui_theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                )))
+                .title_bottom(Line::from(vec![
+                    Span::styled(
+                        provider_picker_nav_hint(),
+                        Style::default().fg(self.ui_theme.text_muted),
+                    ),
+                    Span::raw("move "),
+                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw(format!("{enter_action} ")),
+                    Span::styled(" R ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("edit key "),
+                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("cancel "),
+                ]))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default());
+            let inner = outer.inner(area);
+            outer.render(area, buf);
+            inner
+        };
 
         let visible_rows = usize::from(inner.height);
         let visible_start = self.visible_start(visible_rows);
@@ -203,29 +233,29 @@ impl ProviderPickerView {
         {
             let is_selected = idx == self.selected_idx;
             let is_active = *provider == self.active_provider;
-            let arrow = if is_selected { "▸" } else { " " };
+            let arrow = provider_picker_marker(is_selected);
             let active_dot = if is_active { " *" } else { "  " };
             let spacer_style = if is_selected {
-                Self::selected_row_bg_style()
+                self.selected_row_bg_style()
             } else {
                 Style::default()
             };
             let label_style = if is_selected {
-                Self::selected_row_style(palette::TEXT_PRIMARY)
+                self.selected_row_style(self.ui_theme.selection_text)
             } else {
-                Style::default().fg(palette::TEXT_PRIMARY)
+                Style::default().fg(self.ui_theme.text_body)
             };
             let hint_style = if is_selected {
                 let hint_fg = if *has_key {
-                    palette::TEXT_MUTED
+                    self.ui_theme.selection_text
                 } else {
-                    palette::STATUS_WARNING
+                    self.ui_theme.warning
                 };
-                Self::selected_row_style(hint_fg)
+                self.selected_row_style(hint_fg)
             } else if *has_key {
-                Style::default().fg(palette::TEXT_MUTED)
+                Style::default().fg(self.ui_theme.text_muted)
             } else {
-                Style::default().fg(palette::STATUS_WARNING)
+                Style::default().fg(self.ui_theme.warning)
             };
             let hint = Self::provider_hint(*provider, *has_key);
             let mut line = Line::from(vec![
@@ -238,13 +268,13 @@ impl ProviderPickerView {
                 Span::styled(hint, hint_style),
             ]);
             if is_selected {
-                line.style = Self::selected_row_bg_style();
+                line.style = self.selected_row_bg_style();
                 let target_width = usize::from(inner.width);
                 let line_width = line.width();
                 if line_width < target_width {
                     line.spans.push(Span::styled(
                         " ".repeat(target_width - line_width),
-                        Self::selected_row_bg_style(),
+                        self.selected_row_bg_style(),
                     ));
                 }
             }
@@ -255,24 +285,36 @@ impl ProviderPickerView {
 
     fn render_key_entry(&self, area: Rect, buf: &mut Buffer) {
         let provider = self.selected_provider();
-        let outer = Block::default()
-            .title(Line::from(Span::styled(
-                format!(" API key — {} ", provider.display_name()),
-                Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .title_bottom(Line::from(vec![
-                Span::styled(" Enter ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("save & switch "),
-                Span::styled(" Esc ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("back "),
-            ]))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default());
-        let inner = outer.inner(area);
-        outer.render(area, buf);
+        let inner = if palette::ascii_ui_enabled() {
+            let title = format!(" API key - {} ", provider.display_name());
+            render_ascii_provider_picker_chrome(
+                area,
+                buf,
+                &title,
+                " Enter save & switch Esc back ",
+                self.ui_theme,
+            )
+        } else {
+            let outer = Block::default()
+                .title(Line::from(Span::styled(
+                    format!(" API key — {} ", provider.display_name()),
+                    Style::default()
+                        .fg(self.ui_theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                )))
+                .title_bottom(Line::from(vec![
+                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("save & switch "),
+                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("back "),
+                ]))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default());
+            let inner = outer.inner(area);
+            outer.render(area, buf);
+            inner
+        };
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -290,11 +332,11 @@ impl ProviderPickerView {
             masked
         };
         let key_lines = vec![Line::from(vec![
-            Span::styled("Key: ", Style::default().fg(palette::TEXT_MUTED)),
+            Span::styled("Key: ", Style::default().fg(self.ui_theme.text_muted)),
             Span::styled(
                 display,
                 Style::default()
-                    .fg(palette::TEXT_PRIMARY)
+                    .fg(self.ui_theme.text_body)
                     .add_modifier(Modifier::BOLD),
             ),
         ])];
@@ -306,9 +348,19 @@ impl ProviderPickerView {
         );
         Paragraph::new(Line::from(Span::styled(
             hint,
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(self.ui_theme.text_muted),
         )))
         .render(layout[1], buf);
+    }
+}
+
+fn provider_picker_marker(selected: bool) -> &'static str {
+    if !selected {
+        " "
+    } else if palette::ascii_ui_enabled() {
+        ">"
+    } else {
+        "\u{25B8}"
     }
 }
 
@@ -330,6 +382,107 @@ fn mask_key(input: &str) -> String {
         .rev()
         .collect();
     format!("{}{}", "*".repeat(len - 4), visible)
+}
+
+fn render_ascii_provider_picker_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    footer: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(theme.text_muted)
+        .bg(theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let footer = ascii_prefix(footer, area.width.saturating_sub(4) as usize);
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &footer,
+            footer_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 impl ModalView for ProviderPickerView {
@@ -453,6 +606,7 @@ impl ModalView for ProviderPickerView {
 mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyModifiers};
+    use unicode_width::UnicodeWidthStr;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -722,7 +876,9 @@ mod tests {
     #[test]
     fn selected_provider_row_uses_strong_highlight() {
         let config = Config::default();
-        let picker = ProviderPickerView::new(ApiProvider::Deepseek, &config);
+        let mut theme = palette::UI_THEME;
+        theme.selection_bg = Color::Indexed(24);
+        let picker = ProviderPickerView::new(ApiProvider::Deepseek, &config).with_ui_theme(theme);
         let area = Rect::new(0, 0, 80, 20);
         let mut buf = Buffer::empty(area);
 
@@ -732,12 +888,63 @@ mod tests {
             .positions()
             .filter(|position| {
                 let cell = &buf[*position];
-                cell.bg == palette::SURFACE_ELEVATED
+                cell.bg == theme.selection_bg
             })
             .count();
         assert!(
             highlighted_cells >= 32,
             "selected provider row should use a visible continuous highlight"
+        );
+    }
+
+    #[test]
+    fn provider_picker_marker_has_ascii_fallback() {
+        assert_eq!(provider_picker_marker(false), " ");
+        let selected = provider_picker_marker(true);
+        if palette::ascii_ui_enabled() {
+            assert_eq!(selected, ">");
+        } else {
+            assert_eq!(selected, "\u{25B8}");
+        }
+    }
+
+    #[test]
+    fn ascii_provider_picker_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_provider_picker_chrome(
+            area,
+            &mut buf,
+            " Provider ",
+            " Enter apply Esc cancel ",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 1, area.y + 1, 22, 6));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 服务商选择 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix must not split UTF-8 codepoints: {prefix:?}"
         );
     }
 }

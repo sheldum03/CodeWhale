@@ -16,7 +16,9 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::deepseek_theme::active_theme;
 use crate::localization::{Locale, MessageId, tr};
 use crate::palette;
 use crate::tools::subagent::MailboxMessage;
@@ -25,6 +27,49 @@ use crate::tui::widgets::tool_card::{ToolFamily, family_glyph, family_label};
 /// Maximum number of recent actions kept on a `DelegateCard`. Older entries
 /// are dropped from the head; an ellipsis row signals truncation.
 pub const DELEGATE_MAX_ACTIONS: usize = 3;
+
+fn agent_card_ellipsis() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn agent_card_action_rail() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "  | "
+    } else {
+        "  \u{2502} "
+    }
+}
+
+fn agent_card_summary_rail() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "  ` "
+    } else {
+        "  \u{2570} "
+    }
+}
+
+fn fanout_counts_text(
+    locale: Locale,
+    done: usize,
+    running: usize,
+    failed: usize,
+    pending: usize,
+) -> String {
+    let text = tr(locale, MessageId::FanoutCounts)
+        .replace("{done}", &done.to_string())
+        .replace("{running}", &running.to_string())
+        .replace("{failed}", &failed.to_string())
+        .replace("{pending}", &pending.to_string());
+    if palette::ascii_ui_enabled() {
+        text.replace('\u{00B7}', "|")
+    } else {
+        text
+    }
+}
 
 /// Lifecycle of a delegated / fanned-out agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,12 +97,13 @@ impl AgentLifecycle {
     }
 
     fn color(self) -> Color {
+        let theme = active_theme();
         match self {
-            Self::Pending => palette::TEXT_MUTED,
-            Self::Running => palette::STATUS_WARNING,
-            Self::Completed => palette::STATUS_SUCCESS,
-            Self::Failed => palette::STATUS_ERROR,
-            Self::Cancelled => palette::TEXT_MUTED,
+            Self::Pending => theme.text_muted_color,
+            Self::Running => theme.status_warning_color,
+            Self::Completed => theme.status_success_color,
+            Self::Failed => theme.status_error_color,
+            Self::Cancelled => theme.text_muted_color,
         }
     }
 }
@@ -100,7 +146,7 @@ impl DelegateCard {
     }
 
     #[must_use]
-    pub fn render_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    pub fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines = Vec::with_capacity(self.actions.len() + 3);
         let role = readable_agent_role(&self.agent_type);
         let short_id = crate::session_manager::truncate_id(&self.agent_id).to_string();
@@ -117,26 +163,34 @@ impl DelegateCard {
         ));
         if self.truncated {
             lines.push(Line::from(Span::styled(
-                "  \u{2026}".to_string(), // …
-                Style::default().fg(palette::TEXT_MUTED),
+                format!("  {}", agent_card_ellipsis()),
+                Style::default().fg(active_theme().text_muted_color),
             )));
         }
+        let action_width = value_width_after_prefix(width, agent_card_action_rail(), 200);
         for action in &self.actions {
             lines.push(Line::from(vec![
-                Span::styled("  \u{2502} ", Style::default().fg(palette::TEXT_DIM)),
                 Span::styled(
-                    truncate_action(action, 200),
-                    Style::default().fg(palette::TEXT_TOOL_OUTPUT),
+                    agent_card_action_rail(),
+                    Style::default().fg(active_theme().text_dim_color),
+                ),
+                Span::styled(
+                    truncate_action(action, action_width),
+                    Style::default().fg(active_theme().text_body_color),
                 ),
             ]));
         }
         if self.status.is_terminal()
             && let Some(summary) = self.summary.as_ref()
         {
+            let summary_width = value_width_after_prefix(width, agent_card_summary_rail(), 200);
             lines.push(Line::from(vec![
-                Span::styled("  \u{2570} ", Style::default().fg(palette::TEXT_DIM)),
                 Span::styled(
-                    truncate_action(summary, 200),
+                    agent_card_summary_rail(),
+                    Style::default().fg(active_theme().text_dim_color),
+                ),
+                Span::styled(
+                    truncate_action(summary, summary_width),
                     Style::default().fg(self.status.color()),
                 ),
             ]));
@@ -274,14 +328,23 @@ impl FanoutCard {
 
     #[must_use]
     pub fn dot_grid(&self) -> String {
+        self.dot_grid_with_ascii(palette::ascii_ui_enabled())
+    }
+
+    fn dot_grid_with_ascii(&self, ascii: bool) -> String {
         let mut s = String::with_capacity(self.workers.len());
         for slot in &self.workers {
-            let glyph = match slot.status {
-                AgentLifecycle::Completed => '\u{25CF}', // ●
-                AgentLifecycle::Running => '\u{25D0}',   // ◐
-                AgentLifecycle::Failed => '\u{00D7}',    // ×
-                AgentLifecycle::Cancelled => '\u{2298}', // ⊘
-                AgentLifecycle::Pending => '\u{25CB}',   // ○
+            let glyph = match (ascii, slot.status) {
+                (true, AgentLifecycle::Completed) => '#',
+                (true, AgentLifecycle::Running) => '~',
+                (true, AgentLifecycle::Failed) => 'x',
+                (true, AgentLifecycle::Cancelled) => '!',
+                (true, AgentLifecycle::Pending) => 'o',
+                (false, AgentLifecycle::Completed) => '\u{25CF}', // ●
+                (false, AgentLifecycle::Running) => '\u{25D0}',   // ◐
+                (false, AgentLifecycle::Failed) => '\u{00D7}',    // ×
+                (false, AgentLifecycle::Cancelled) => '\u{2298}', // ⊘
+                (false, AgentLifecycle::Pending) => '\u{25CB}',   // ○
             };
             s.push(glyph);
         }
@@ -289,7 +352,7 @@ impl FanoutCard {
     }
 
     #[must_use]
-    pub fn render_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    pub fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines = Vec::with_capacity(3);
         let header_status = self.aggregate_status();
         let title = format!("{} ({} workers)", self.kind, self.workers.len());
@@ -299,12 +362,13 @@ impl FanoutCard {
             ToolFamily::Fanout
         };
         lines.push(card_header(family, header_status, &self.kind, &title));
+        let grid_width = value_width_after_prefix(width, "  ", 200);
         lines.push(Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(
-                self.dot_grid(),
+                truncate_action(&self.dot_grid(), grid_width),
                 Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(active_theme().assistant_accent_color)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -312,12 +376,8 @@ impl FanoutCard {
         lines.push(Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(
-                tr(self.locale, MessageId::FanoutCounts)
-                    .replace("{done}", &done.to_string())
-                    .replace("{running}", &running.to_string())
-                    .replace("{failed}", &failed.to_string())
-                    .replace("{pending}", &pending.to_string()),
-                Style::default().fg(palette::TEXT_MUTED),
+                fanout_counts_text(self.locale, done, running, failed, pending),
+                Style::default().fg(active_theme().text_muted_color),
             ),
         ]));
         lines
@@ -366,14 +426,20 @@ fn card_header(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(role.to_string(), Style::default().fg(palette::TEXT_PRIMARY)),
+        Span::styled(
+            role.to_string(),
+            Style::default().fg(active_theme().text_body_color),
+        ),
         Span::raw(" "),
         Span::styled(
             format!("[{}]", status.label()),
             Style::default().fg(header_color),
         ),
         Span::raw(" "),
-        Span::styled(detail.to_string(), Style::default().fg(palette::TEXT_MUTED)),
+        Span::styled(
+            detail.to_string(),
+            Style::default().fg(active_theme().text_muted_color),
+        ),
     ])
 }
 
@@ -392,15 +458,52 @@ fn readable_agent_role(agent_type: &str) -> String {
     }
 }
 
-fn truncate_action(text: &str, max: usize) -> String {
+fn value_width_after_prefix(width: u16, prefix: &str, cap: usize) -> usize {
+    usize::from(width)
+        .saturating_sub(UnicodeWidthStr::width(prefix))
+        .min(cap)
+        .max(1)
+}
+
+fn truncate_action(text: &str, max_width: usize) -> String {
     let trimmed = text.trim();
-    if trimmed.chars().count() <= max {
-        trimmed.to_string()
-    } else {
-        let mut out: String = trimmed.chars().take(max.saturating_sub(1)).collect();
-        out.push('\u{2026}');
-        out
+    if UnicodeWidthStr::width(trimmed) <= max_width {
+        return trimmed.to_string();
     }
+
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let ellipsis = agent_card_ellipsis();
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if ellipsis_width >= max_width {
+        let mut out = String::new();
+        let mut width = 0usize;
+        for ch in ellipsis.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                break;
+            }
+            out.push(ch);
+            width += ch_width;
+        }
+        return out;
+    }
+
+    let limit = max_width.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in trimmed.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > limit {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str(ellipsis);
+    out
 }
 
 /// Apply a mailbox envelope to a `DelegateCard`. Returns `true` if the
@@ -501,6 +604,7 @@ pub fn apply_to_fanout(card: &mut FanoutCard, msg: &MailboxMessage) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     fn render_to_strings(lines: &[Line<'static>]) -> Vec<String> {
         lines
@@ -535,7 +639,9 @@ mod tests {
 
         let rendered = render_to_strings(&card.render_lines(80));
         assert!(
-            rendered.iter().any(|line| line.contains('\u{2026}')),
+            rendered
+                .iter()
+                .any(|line| line.contains(agent_card_ellipsis())),
             "ellipsis indicator must render: got {rendered:?}"
         );
         // The oldest two actions ("read README.md", "grep TODO") were dropped.
@@ -555,6 +661,43 @@ mod tests {
             rendered.iter().any(|line| line.contains("edit src/lib.rs")),
             "third-newest retained: got {rendered:?}"
         );
+    }
+
+    #[test]
+    fn truncate_action_respects_display_width_for_cjk() {
+        let truncated = truncate_action("修复终端布局和宽字符渲染", 12);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 12,
+            "truncated action must fit display width: {truncated:?}"
+        );
+        assert!(
+            truncated.ends_with(agent_card_ellipsis()),
+            "truncated action should keep the active ellipsis style: {truncated:?}"
+        );
+    }
+
+    #[test]
+    fn delegate_card_action_rows_fit_render_width_for_cjk() {
+        let width = 16u16;
+        let mut card = DelegateCard::new("agent_002", "general");
+        card.push_action("修复终端布局和宽字符渲染，避免卡片溢出");
+        card.status = AgentLifecycle::Completed;
+        card.summary = Some("完成宽字符渲染检查并补齐测试".to_string());
+
+        let rendered = render_to_strings(&card.render_lines(width));
+        for line in rendered
+            .iter()
+            .filter(|line| {
+                line.starts_with(agent_card_action_rail())
+                    || line.starts_with(agent_card_summary_rail())
+            })
+        {
+            assert!(
+                UnicodeWidthStr::width(line.as_str()) <= usize::from(width),
+                "delegate detail row should fit width {width}: {line:?}"
+            );
+        }
     }
 
     #[test]
@@ -647,9 +790,100 @@ mod tests {
 
         // Completed fills; running and failed are distinct; pending stays open.
         assert_eq!(
-            card.dot_grid(),
+            card.dot_grid_with_ascii(false),
             "\u{25CF}\u{25CF}\u{25D0}\u{00D7}\u{25CB}\u{25CB}\u{25CB}"
         );
+    }
+
+    #[test]
+    fn fanout_card_dot_grid_has_ascii_fallback() {
+        let mut card = FanoutCard::new("fanout", Locale::En)
+            .with_workers(["w_1", "w_2", "w_3", "w_4", "w_5"]);
+        card.upsert_worker("w_1", AgentLifecycle::Completed);
+        card.upsert_worker("w_2", AgentLifecycle::Running);
+        card.upsert_worker("w_3", AgentLifecycle::Failed);
+        card.upsert_worker("w_4", AgentLifecycle::Cancelled);
+
+        assert_eq!(card.dot_grid_with_ascii(true), "#~x!o");
+    }
+
+    #[test]
+    fn fanout_card_dot_grid_fits_render_width() {
+        let width = 12u16;
+        let ids = (0..40).map(|idx| format!("w_{idx}")).collect::<Vec<_>>();
+        let card = FanoutCard::new("fanout", Locale::En).with_workers(ids);
+
+        let rendered = render_to_strings(&card.render_lines(width));
+        let grid = rendered
+            .iter()
+            .find(|line| {
+                line.starts_with("  ")
+                    && !line.contains("running")
+                    && !line.contains("pending")
+            })
+            .expect("dot-grid line present");
+
+        assert!(
+            UnicodeWidthStr::width(grid.as_str()) <= usize::from(width),
+            "fanout grid row should fit width {width}: {grid:?}"
+        );
+        assert!(
+            grid.ends_with(agent_card_ellipsis()),
+            "truncated fanout grid should keep the active ellipsis style: {grid:?}"
+        );
+        assert!(
+            rendered.iter().any(|line| line.contains("40 pending")),
+            "counts line should preserve full worker count: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn delegate_card_symbol_helpers_have_ascii_fallbacks() {
+        let ellipsis = if palette::ascii_ui_enabled() {
+            "..."
+        } else {
+            "\u{2026}"
+        };
+        assert_eq!(agent_card_ellipsis(), ellipsis);
+        if palette::ascii_ui_enabled() {
+            assert_eq!(agent_card_action_rail(), "  | ");
+            assert_eq!(agent_card_summary_rail(), "  ` ");
+        } else {
+            assert_eq!(agent_card_action_rail(), "  \u{2502} ");
+            assert_eq!(agent_card_summary_rail(), "  \u{2570} ");
+        }
+    }
+
+    #[test]
+    fn fanout_counts_text_has_ascii_separator_fallback() {
+        let text = fanout_counts_text(Locale::En, 1, 2, 3, 4);
+        if palette::ascii_ui_enabled() {
+            assert_eq!(text, "1 done | 2 running | 3 failed | 4 pending");
+        } else {
+            assert_eq!(
+                text,
+                "1 done \u{00B7} 2 running \u{00B7} 3 failed \u{00B7} 4 pending"
+            );
+        }
+    }
+
+    #[test]
+    fn delegate_card_status_colors_follow_active_theme() {
+        let mut theme = crate::deepseek_theme::Theme::dark();
+        theme.status_success_color = Color::Indexed(42);
+        let mut card = DelegateCard::new("agent_002", "explore");
+        card.status = AgentLifecycle::Completed;
+        card.summary = Some("done".to_string());
+
+        let lines = crate::deepseek_theme::with_active_theme(theme, || card.render_lines(80));
+        let summary_line = lines.last().expect("terminal summary line");
+        let summary_span = summary_line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref().contains("done"))
+            .expect("summary span");
+
+        assert_eq!(summary_span.style.fg, Some(Color::Indexed(42)));
     }
 
     #[test]
@@ -740,7 +974,7 @@ mod tests {
                 card.upsert_worker(id, AgentLifecycle::Completed);
             }
             assert_eq!(
-                card.dot_grid(),
+                card.dot_grid_with_ascii(false),
                 *expected,
                 "fanout dot-grid for total={total} done={done}",
             );
@@ -760,7 +994,13 @@ mod tests {
         let rendered = render_to_strings(&card.render_lines(80));
         let stats = rendered
             .iter()
-            .find(|line| line.contains('·'))
+            .find(|line| {
+                line.contains(if palette::ascii_ui_enabled() {
+                    '|'
+                } else {
+                    '\u{00B7}'
+                })
+            })
             .expect("counts line present");
         assert!(stats.contains("已完成"), "{stats}");
         assert!(stats.contains("运行中"), "{stats}");

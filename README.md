@@ -564,6 +564,12 @@ built-in chips such as `mode`, `model`, `status`, `git_branch`, `tokens`, and
 layouts, custom colors, and external command widgets are not part of the
 current statusline surface.
 
+Use `/theme deepseek-shell` to try the opt-in DeepSeek Shell CLI theme, or set
+`theme = "deepseek-shell"` in `settings.toml`. Use `/theme system` to return to
+the default terminal-aware behavior. If your terminal font cannot render the
+Unicode chrome reliably, start CodeWhale with `CODEWHALE_ASCII_UI=1` for plain
+ASCII UI symbols.
+
 Custom DeepSeek-compatible endpoints usually do not need a new provider. Keep
 `provider = "deepseek"` and set `[providers.deepseek].base_url` / `model`, or
 use `provider = "openai"` for generic OpenAI-compatible gateways. Keep
@@ -583,6 +589,7 @@ Key environment variables:
 | `DEEPSEEK_PROFILE` | Config profile name |
 | `DEEPSEEK_MEMORY` | Set to `on` to enable user memory |
 | `DEEPSEEK_ALLOW_INSECURE_HTTP=1` | Allow non-local `http://` API base URLs on trusted networks |
+| `CODEWHALE_ASCII_UI=1` | Use plain ASCII UI symbols for terminals or fonts with poor Unicode coverage |
 | `NVIDIA_API_KEY` / `OPENAI_API_KEY` / `ATLASCLOUD_API_KEY` / `WANJIE_ARK_API_KEY` / `VOLCENGINE_API_KEY` / `VOLCENGINE_ARK_API_KEY` / `ARK_API_KEY` / `OPENROUTER_API_KEY` / `XIAOMI_MIMO_API_KEY` / `XIAOMI_API_KEY` / `MIMO_API_KEY` / `NOVITA_API_KEY` / `FIREWORKS_API_KEY` / `SILICONFLOW_API_KEY` / `ARCEE_API_KEY` / `MOONSHOT_API_KEY` / `KIMI_API_KEY` / `SGLANG_API_KEY` / `VLLM_API_KEY` / `OLLAMA_API_KEY` / `HUGGINGFACE_API_KEY` / `HF_TOKEN` | Provider auth |
 | `OPENAI_BASE_URL` / `OPENAI_MODEL` | Generic OpenAI-compatible endpoint and model ID |
 | `ATLASCLOUD_BASE_URL` / `ATLASCLOUD_MODEL` | AtlasCloud endpoint and model override |

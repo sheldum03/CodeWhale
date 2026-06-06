@@ -27,6 +27,7 @@
 //! module always assumes the user is being asked.
 
 use crate::localization::Locale;
+use crate::palette;
 use crate::sandbox::SandboxPolicy;
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 use crate::tui::widgets::{ApprovalWidget, ElevationWidget, Renderable};
@@ -514,6 +515,7 @@ pub struct ApprovalView {
     request: ApprovalRequest,
     selected: usize,
     locale: Locale,
+    ui_theme: palette::UiTheme,
     timeout: Option<Duration>,
     requested_at: Instant,
     /// Whether the approval card is collapsed to a single-line banner.
@@ -531,10 +533,17 @@ impl ApprovalView {
             request,
             selected: 0,
             locale,
+            ui_theme: palette::UI_THEME,
             timeout: None,
             requested_at: Instant::now(),
             collapsed: false,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: palette::UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn select_prev(&mut self) {
@@ -648,7 +657,7 @@ impl ModalView for ApprovalView {
     }
 
     fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        let approval_widget = ApprovalWidget::new(&self.request, self);
+        let approval_widget = ApprovalWidget::new(&self.request, self, self.ui_theme);
         approval_widget.render(area, buf);
     }
 
@@ -821,6 +830,7 @@ impl ElevationRequest {
 pub struct ElevationView {
     request: ElevationRequest,
     selected: usize,
+    ui_theme: palette::UiTheme,
 }
 
 impl ElevationView {
@@ -828,7 +838,14 @@ impl ElevationView {
         Self {
             request,
             selected: 0,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: palette::UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn select_prev(&mut self) {
@@ -902,7 +919,7 @@ impl ModalView for ElevationView {
     }
 
     fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        let elevation_widget = ElevationWidget::new(&self.request, self.selected);
+        let elevation_widget = ElevationWidget::new(&self.request, self.selected, self.ui_theme);
         elevation_widget.render(area, buf);
     }
 }

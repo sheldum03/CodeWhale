@@ -1787,13 +1787,25 @@ fn run_setup(config: &Config, workspace: &Path, args: SetupArgs) -> Result<()> {
         let status = init_mcp_config(&mcp_path, args.force)?;
         match status {
             WriteStatus::Created => {
-                println!("  ✓ Created MCP config at {}", mcp_path.display());
+                println!(
+                    "  {} Created MCP config at {}",
+                    cli_success_symbol(),
+                    mcp_path.display()
+                );
             }
             WriteStatus::Overwritten => {
-                println!("  ✓ Overwrote MCP config at {}", mcp_path.display());
+                println!(
+                    "  {} Overwrote MCP config at {}",
+                    cli_success_symbol(),
+                    mcp_path.display()
+                );
             }
             WriteStatus::SkippedExists => {
-                println!("  · MCP config already exists at {}", mcp_path.display());
+                println!(
+                    "  {} MCP config already exists at {}",
+                    cli_bullet_symbol(),
+                    mcp_path.display()
+                );
             }
         }
         println!(
@@ -1810,14 +1822,23 @@ fn run_setup(config: &Config, workspace: &Path, args: SetupArgs) -> Result<()> {
         let (skill_path, status) = init_skills_dir(&skills_dir, args.force)?;
         match status {
             WriteStatus::Created => {
-                println!("  ✓ Created example skill at {}", skill_path.display());
+                println!(
+                    "  {} Created example skill at {}",
+                    cli_success_symbol(),
+                    skill_path.display()
+                );
             }
             WriteStatus::Overwritten => {
-                println!("  ✓ Overwrote example skill at {}", skill_path.display());
+                println!(
+                    "  {} Overwrote example skill at {}",
+                    cli_success_symbol(),
+                    skill_path.display()
+                );
             }
             WriteStatus::SkippedExists => {
                 println!(
-                    "  · Example skill already exists at {}",
+                    "  {} Example skill already exists at {}",
+                    cli_bullet_symbol(),
                     skill_path.display()
                 );
             }
@@ -1860,9 +1881,12 @@ fn run_setup(config: &Config, workspace: &Path, args: SetupArgs) -> Result<()> {
 
     let sandbox = crate::sandbox::get_platform_sandbox();
     if let Some(kind) = sandbox {
-        println!("  ✓ Sandbox available: {kind}");
+        println!("  {} Sandbox available: {kind}", cli_success_symbol());
     } else {
-        println!("  · Sandbox not available on this platform (best-effort only).");
+        println!(
+            "  {} Sandbox not available on this platform (best-effort only).",
+            cli_bullet_symbol()
+        );
     }
 
     Ok(())
@@ -1871,13 +1895,21 @@ fn run_setup(config: &Config, workspace: &Path, args: SetupArgs) -> Result<()> {
 fn report_write_status(label: &str, path: &Path, status: WriteStatus) {
     match status {
         WriteStatus::Created => {
-            println!("  ✓ Created {label} at {}", path.display());
+            println!("  {} Created {label} at {}", cli_success_symbol(), path.display());
         }
         WriteStatus::Overwritten => {
-            println!("  ✓ Overwrote {label} at {}", path.display());
+            println!(
+                "  {} Overwrote {label} at {}",
+                cli_success_symbol(),
+                path.display()
+            );
         }
         WriteStatus::SkippedExists => {
-            println!("  · {label} already exists at {}", path.display());
+            println!(
+                "  {} {label} already exists at {}",
+                cli_bullet_symbol(),
+                path.display()
+            );
         }
     }
 }
@@ -1938,6 +1970,95 @@ fn skills_count_for(dir: &Path) -> usize {
     crate::skills::SkillRegistry::discover(dir).len()
 }
 
+fn cli_success_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "+"
+    } else {
+        "\u{2713}"
+    }
+}
+
+fn cli_error_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "x"
+    } else {
+        "\u{2717}"
+    }
+}
+
+fn cli_warning_symbol() -> &'static str {
+    "!"
+}
+
+fn cli_bullet_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{00B7}"
+    }
+}
+
+fn cli_arrow_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "->"
+    } else {
+        "\u{2192}"
+    }
+}
+
+fn cli_left_arrow_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "<-"
+    } else {
+        "\u{2190}"
+    }
+}
+
+fn cli_ellipsis_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn cli_title_separator_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{2014}"
+    }
+}
+
+fn cli_text(text: impl Into<String>) -> String {
+    crate::commands::command_text_with_ascii_fallback(text)
+}
+
+#[cfg(test)]
+mod cli_visual_symbol_tests {
+    use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
+
+    #[test]
+    fn cli_symbols_have_ascii_fallbacks() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        assert_eq!(cli_success_symbol(), "+");
+        assert_eq!(cli_error_symbol(), "x");
+        assert_eq!(cli_warning_symbol(), "!");
+        assert_eq!(cli_bullet_symbol(), "-");
+        assert_eq!(cli_arrow_symbol(), "->");
+        assert_eq!(cli_left_arrow_symbol(), "<-");
+        assert_eq!(cli_ellipsis_symbol(), "...");
+        assert_eq!(cli_title_separator_symbol(), "-");
+        assert_eq!(
+            cli_text("missing — run setup ✓ ✗"),
+            "missing - run setup + x"
+        );
+    }
+}
+
 fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
     use crate::palette;
     use colored::Colorize;
@@ -1956,15 +2077,15 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
     match resolve_api_key_source(config) {
         ApiKeySource::Env => println!(
             "  {} api_key: set via DEEPSEEK_API_KEY",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         ),
         ApiKeySource::Keyring => println!(
             "  {} api_key: set via OS keyring",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         ),
         ApiKeySource::Config => println!(
             "  {} api_key: set via config",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         ),
         ApiKeySource::Missing => {
             let (env_var, login_hint) = match config.api_provider() {
@@ -2038,7 +2159,7 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
             };
             println!(
                 "  {} api_key: missing  (set {env_var} or `[providers.{}].api_key` in ~/.codewhale/config.toml; or run `{login_hint}`)",
-                "✗".truecolor(red_r, red_g, red_b),
+                cli_error_symbol().truecolor(red_r, red_g, red_b),
                 match config.api_provider() {
                     crate::config::ApiProvider::NvidiaNim => "nvidia_nim",
                     crate::config::ApiProvider::Openai => "openai",
@@ -2063,12 +2184,12 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
             );
         }
     }
-    println!("  · base_url: {}", config.deepseek_base_url());
+    println!("  {} base_url: {}", cli_bullet_symbol(), config.deepseek_base_url());
     let model = config
         .default_text_model
         .clone()
         .unwrap_or_else(|| DEFAULT_TEXT_MODEL.to_string());
-    println!("  · default_text_model: {model}");
+    println!("  {} default_text_model: {model}", cli_bullet_symbol());
 
     let mcp_path = config.mcp_config_path();
     let mcp_count = match load_mcp_config(&mcp_path) {
@@ -2077,25 +2198,28 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
     };
     let mcp_present = if mcp_path.exists() { "" } else { "  (missing)" };
     println!(
-        "  · mcp servers: {mcp_count} at {}{mcp_present}",
+        "  {} mcp servers: {mcp_count} at {}{mcp_present}",
+        cli_bullet_symbol(),
         mcp_path.display()
     );
 
     let skills_dir = config.skills_dir();
     println!(
-        "  · skills: {} at {}",
+        "  {} skills: {} at {}",
+        cli_bullet_symbol(),
         skills_count_for(&skills_dir),
         crate::utils::display_path(&skills_dir)
     );
 
     let tools_dir = default_tools_dir();
     let tools_present = if tools_dir.exists() {
-        ""
+        String::new()
     } else {
-        "  (missing — run `setup --tools`)"
+        cli_text("  (missing — run `setup --tools`)")
     };
     println!(
-        "  · tools: {} entries at {}{tools_present}",
+        "  {} tools: {} entries at {}{tools_present}",
+        cli_bullet_symbol(),
         if tools_dir.exists() {
             count_dir_entries(&tools_dir)
         } else {
@@ -2106,12 +2230,13 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
 
     let plugins_dir = default_plugins_dir();
     let plugins_present = if plugins_dir.exists() {
-        ""
+        String::new()
     } else {
-        "  (missing — run `setup --plugins`)"
+        cli_text("  (missing — run `setup --plugins`)")
     };
     println!(
-        "  · plugins: {} entries at {}{plugins_present}",
+        "  {} plugins: {} entries at {}{plugins_present}",
+        cli_bullet_symbol(),
         if plugins_dir.exists() {
             count_dir_entries(&plugins_dir)
         } else {
@@ -2124,15 +2249,15 @@ fn run_setup_status(config: &Config, workspace: &Path) -> Result<()> {
     match sandbox {
         Some(kind) => println!(
             "  {} sandbox: {kind}",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         ),
         None => println!(
             "  {} sandbox: unavailable (commands run best-effort)",
-            "!".truecolor(sky_r, sky_g, sky_b)
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b)
         ),
     }
 
-    println!("  {} {}", "·".dimmed(), dotenv_status_line(workspace));
+    println!("  {} {}", cli_bullet_symbol().dimmed(), dotenv_status_line(workspace));
 
     println!();
     println!("Run `codewhale doctor --json` for a machine-readable check.");
@@ -2157,8 +2282,11 @@ fn run_setup_clean(checkpoints_dir: &Path, force: bool) -> Result<()> {
 
     if !checkpoints_dir.exists() {
         println!(
-            "Nothing to clean — checkpoints dir does not exist: {}",
-            checkpoints_dir.display()
+            "{}",
+            cli_text(format!(
+                "Nothing to clean — checkpoints dir does not exist: {}",
+                checkpoints_dir.display()
+            ))
         );
         return Ok(());
     }
@@ -2166,8 +2294,11 @@ fn run_setup_clean(checkpoints_dir: &Path, force: bool) -> Result<()> {
     let plan = collect_clean_targets(checkpoints_dir);
     if plan.targets.is_empty() {
         println!(
-            "Nothing to clean — no checkpoint files in {}",
-            checkpoints_dir.display()
+            "{}",
+            cli_text(format!(
+                "Nothing to clean — no checkpoint files in {}",
+                checkpoints_dir.display()
+            ))
         );
         return Ok(());
     }
@@ -2178,7 +2309,7 @@ fn run_setup_clean(checkpoints_dir: &Path, force: bool) -> Result<()> {
             plan.targets.len()
         );
         for path in &plan.targets {
-            println!("  · {}", path.display());
+            println!("  {} {}", cli_bullet_symbol(), path.display());
         }
         return Ok(());
     }
@@ -2186,7 +2317,7 @@ fn run_setup_clean(checkpoints_dir: &Path, force: bool) -> Result<()> {
     let removed = execute_clean_plan(&plan)?;
     println!("{}", "Cleaned checkpoints:".bold());
     for path in &removed {
-        println!("  ✓ {}", path.display());
+        println!("  {} {}", cli_success_symbol(), path.display());
     }
     Ok(())
 }
@@ -2216,7 +2347,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     println!("{}", "Updates:".bold());
     let current_version = env!("CARGO_PKG_VERSION");
-    println!("  · current: v{current_version}");
+    println!("  {} current: v{current_version}", cli_bullet_symbol());
     match codewhale_release::latest_release_tag_async(codewhale_release::ReleaseChannel::Stable)
         .await
     {
@@ -2232,12 +2363,12 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                 Ok(std::cmp::Ordering::Equal) => {
                     println!(
                         "  {} latest: {latest_tag}",
-                        "✓".truecolor(aqua_r, aqua_g, aqua_b)
+                        cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
                     );
                     println!("    Already up to date.");
                 }
                 Ok(std::cmp::Ordering::Greater) => {
-                    println!("  {} latest: {latest_tag}", "·".dimmed());
+                    println!("  {} latest: {latest_tag}", cli_bullet_symbol().dimmed());
                     println!("    Current build is newer than the latest published release.");
                 }
                 Err(err) => {
@@ -2273,13 +2404,13 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if config_path.exists() {
         println!(
             "  {} config.toml found at {}",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&config_path)
         );
     } else {
         println!(
             "  {} config.toml not found at {} (using defaults/env)",
-            "!".truecolor(sky_r, sky_g, sky_b),
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b),
             crate::utils::display_path(&config_path)
         );
     }
@@ -2419,9 +2550,9 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                     .as_ref()
                     .is_some_and(|v| !v.trim().is_empty()));
         let icon = if in_env || in_config {
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         } else {
-            "·".dimmed()
+            cli_bullet_symbol().dimmed()
         };
         println!(
             "  {} {slot}: env={}, config={}",
@@ -2430,7 +2561,10 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             if in_config { "yes" } else { "no" }
         );
     }
-    println!("  · credential precedence: ~/.codewhale/config.toml, OS keyring, then env");
+    println!(
+        "  {} credential precedence: ~/.codewhale/config.toml, OS keyring, then env",
+        cli_bullet_symbol()
+    );
 
     let api_key_source = resolve_api_key_source(config);
     let has_api_key = if config.deepseek_api_key().is_ok() {
@@ -2452,13 +2586,13 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         };
         println!(
             "  {} active provider key resolved from {source_label}",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         );
         true
     } else {
         println!(
             "  {} active provider key not configured",
-            "✗".truecolor(red_r, red_g, red_b)
+            cli_error_symbol().truecolor(red_r, red_g, red_b)
         );
         println!(
             "    Run 'codewhale auth set --provider <name>' to save a key to ~/.codewhale/config.toml."
@@ -2470,14 +2604,16 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     println!();
     println!("{}", "API Connectivity:".bold());
     let api_target = doctor_api_target(config);
-    println!("  · provider: {}", api_target.provider);
-    println!("  · base_url: {}", api_target.base_url);
-    println!("  · model: {}", api_target.model);
+    println!("  {} provider: {}", cli_bullet_symbol(), api_target.provider);
+    println!("  {} base_url: {}", cli_bullet_symbol(), api_target.base_url);
+    println!("  {} model: {}", cli_bullet_symbol(), api_target.model);
     let strict_tool_mode = doctor_strict_tool_mode_status(config);
     let strict_icon = match strict_tool_mode.status {
-        "ready" => "✓".truecolor(aqua_r, aqua_g, aqua_b),
-        "fallback_non_beta" | "custom_endpoint" => "!".truecolor(sky_r, sky_g, sky_b),
-        _ => "·".dimmed(),
+        "ready" => cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+        "fallback_non_beta" | "custom_endpoint" => {
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b)
+        }
+        _ => cli_bullet_symbol().dimmed(),
     };
     println!(
         "  {} strict_tool_mode: {}",
@@ -2494,7 +2630,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         );
     }
     if has_api_key {
-        print!("  {} Testing connection...", "·".dimmed());
+        print!("  {} Testing connection...", cli_bullet_symbol().dimmed());
         use std::io::Write;
         std::io::stdout().flush().ok();
 
@@ -2502,14 +2638,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             Ok(()) => {
                 println!(
                     "\r  {} API connection successful",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b)
+                    cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
                 );
             }
             Err(e) => {
                 let error_msg = e.to_string();
                 println!(
                     "\r  {} API connection failed",
-                    "✗".truecolor(red_r, red_g, red_b)
+                    cli_error_symbol().truecolor(red_r, red_g, red_b)
                 );
                 if error_msg.contains("401") || error_msg.contains("Unauthorized") {
                     println!(
@@ -2548,7 +2684,10 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             }
         }
     } else {
-        println!("  {} Skipped (no API key configured)", "·".dimmed());
+        println!(
+            "  {} Skipped (no API key configured)",
+            cli_bullet_symbol().dimmed()
+        );
     }
 
     // MCP configuration
@@ -2558,12 +2697,12 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if features.enabled(Feature::Mcp) {
         println!(
             "  {} MCP feature flag enabled",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b)
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b)
         );
     } else {
         println!(
             "  {} MCP feature flag disabled",
-            "!".truecolor(sky_r, sky_g, sky_b)
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b)
         );
     }
 
@@ -2571,17 +2710,17 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if mcp_config_path.exists() {
         println!(
             "  {} MCP config found at {}",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&mcp_config_path)
         );
         match load_mcp_config(&mcp_config_path) {
             Ok(cfg) if cfg.servers.is_empty() => {
-                println!("  {} 0 server(s) configured", "·".dimmed());
+                println!("  {} 0 server(s) configured", cli_bullet_symbol().dimmed());
             }
             Ok(cfg) => {
                 println!(
                     "  {} {} server(s) configured",
-                    "·".dimmed(),
+                    cli_bullet_symbol().dimmed(),
                     cfg.servers.len()
                 );
                 for (name, server) in &cfg.servers {
@@ -2590,21 +2729,21 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                         McpServerDoctorStatus::Ok(ref detail) => {
                             format!(
                                 "  {} {name}: {}",
-                                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                                cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
                                 detail
                             )
                         }
                         McpServerDoctorStatus::Warning(ref detail) => {
                             format!(
                                 "  {} {name}: {}",
-                                "!".truecolor(sky_r, sky_g, sky_b),
+                                cli_warning_symbol().truecolor(sky_r, sky_g, sky_b),
                                 detail
                             )
                         }
                         McpServerDoctorStatus::Error(ref detail) => {
                             format!(
                                 "  {} {name}: {}",
-                                "✗".truecolor(red_r, red_g, red_b),
+                                cli_error_symbol().truecolor(red_r, red_g, red_b),
                                 detail
                             )
                         }
@@ -2618,7 +2757,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
             Err(err) => {
                 println!(
                     "  {} MCP config parse error: {}",
-                    "✗".truecolor(red_r, red_g, red_b),
+                    cli_error_symbol().truecolor(red_r, red_g, red_b),
                     err
                 );
             }
@@ -2626,7 +2765,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     } else {
         println!(
             "  {} MCP config not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&mcp_config_path)
         );
         println!("    Run `codewhale mcp init` or `codewhale setup --mcp`.");
@@ -2668,14 +2807,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if local_skills_dir.exists() {
         println!(
             "  {} local skills dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&local_skills_dir),
             describe_dir(&local_skills_dir)
         );
     } else {
         println!(
             "  {} local skills dir not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&local_skills_dir)
         );
     }
@@ -2683,14 +2822,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if agents_skills_dir.exists() {
         println!(
             "  {} .agents skills dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&agents_skills_dir),
             describe_dir(&agents_skills_dir)
         );
     } else {
         println!(
             "  {} .agents skills dir not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&agents_skills_dir)
         );
     }
@@ -2699,14 +2838,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         if agents_global_skills_dir.exists() {
             println!(
                 "  {} global .agents skills dir found at {} ({} items)",
-                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
                 crate::utils::display_path(agents_global_skills_dir),
                 describe_dir(agents_global_skills_dir)
             );
         } else {
             println!(
                 "  {} global .agents skills dir not found at {}",
-                "·".dimmed(),
+                cli_bullet_symbol().dimmed(),
                 crate::utils::display_path(agents_global_skills_dir)
             );
         }
@@ -2715,14 +2854,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if global_skills_dir.exists() {
         println!(
             "  {} global skills dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&global_skills_dir),
             describe_dir(&global_skills_dir)
         );
     } else {
         println!(
             "  {} global skills dir not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&global_skills_dir)
         );
     }
@@ -2733,7 +2872,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if opencode_skills_dir.exists() {
         println!(
             "  {} .opencode skills dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&opencode_skills_dir),
             describe_dir(&opencode_skills_dir)
         );
@@ -2741,7 +2880,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if claude_skills_dir.exists() {
         println!(
             "  {} .claude skills dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&claude_skills_dir),
             describe_dir(&claude_skills_dir)
         );
@@ -2749,7 +2888,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     println!(
         "  {} selected skills dir: {}",
-        "·".dimmed(),
+        cli_bullet_symbol().dimmed(),
         crate::utils::display_path(&selected_skills_dir)
     );
     if !agents_skills_dir.exists()
@@ -2770,14 +2909,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         let count = count_dir_entries(&tools_dir);
         println!(
             "  {} tools dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&tools_dir),
             count
         );
     } else {
         println!(
             "  {} tools dir not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&tools_dir)
         );
         println!("    Run `codewhale setup --tools` to scaffold a starter dir.");
@@ -2791,14 +2930,14 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         let count = count_dir_entries(&plugins_dir);
         println!(
             "  {} plugins dir found at {} ({} items)",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             crate::utils::display_path(&plugins_dir),
             count
         );
     } else {
         println!(
             "  {} plugins dir not found at {}",
-            "·".dimmed(),
+            cli_bullet_symbol().dimmed(),
             crate::utils::display_path(&plugins_dir)
         );
         println!("    Run `codewhale setup --plugins` to scaffold a starter dir.");
@@ -2816,7 +2955,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         if present {
             println!(
                 "  {} tool-output spillover at {} ({} file{})",
-                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
                 crate::utils::display_path(&spillover_root),
                 count,
                 if count == 1 { "" } else { "s" }
@@ -2824,7 +2963,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         } else {
             println!(
                 "  {} tool-output spillover dir not yet created at {}",
-                "·".dimmed(),
+                cli_bullet_symbol().dimmed(),
                 crate::utils::display_path(&spillover_root)
             );
         }
@@ -2837,7 +2976,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         if stash_path.exists() {
             println!(
                 "  {} composer stash at {} ({} parked draft{})",
-                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
                 crate::utils::display_path(&stash_path),
                 stash_count,
                 if stash_count == 1 { "" } else { "s" }
@@ -2845,7 +2984,7 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         } else {
             println!(
                 "  {} composer stash empty (Ctrl+S in the composer to park a draft)",
-                "·".dimmed()
+                cli_bullet_symbol().dimmed()
             );
         }
     }
@@ -2859,14 +2998,15 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     match crate::dependencies::resolve_python_interpreter() {
         Some(name) => println!(
-            "  {} Python: {} → code_execution tool registered",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
-            name
+            "  {} Python: {} {} code_execution tool registered",
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+            name,
+            cli_arrow_symbol()
         ),
         None => {
             println!(
                 "  {} Python: not found (tried {:?})",
-                "✗".truecolor(red_r, red_g, red_b),
+                cli_error_symbol().truecolor(red_r, red_g, red_b),
                 crate::dependencies::PYTHON_CANDIDATES,
             );
             println!("    code_execution tool is NOT advertised to the model on this install.");
@@ -2876,7 +3016,10 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                     println!("      brew install python@3.12   (or download from python.org)")
                 }
                 "linux" => println!(
-                    "      sudo apt install python3    (Debian/Ubuntu) — or your distro's equivalent"
+                    "{}",
+                    cli_text(
+                        "      sudo apt install python3    (Debian/Ubuntu) — or your distro's equivalent"
+                    )
                 ),
                 "windows" => {
                     println!("      winget install Python.Python.3   (or download from python.org)")
@@ -2888,20 +3031,24 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     match crate::dependencies::resolve_node() {
         Some(_) => println!(
-            "  {} Node.js: present → js_execution tool registered",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            "  {} Node.js: present {} js_execution tool registered",
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+            cli_arrow_symbol(),
         ),
         None => {
             println!(
                 "  {} Node.js: not found (tried `node`)",
-                "✗".truecolor(red_r, red_g, red_b),
+                cli_error_symbol().truecolor(red_r, red_g, red_b),
             );
             println!("    js_execution tool is NOT advertised to the model on this install.");
             println!("    Install Node 18+ and ensure `node` is on PATH:");
             match std::env::consts::OS {
                 "macos" => println!("      brew install node   (or download from nodejs.org)"),
                 "linux" => println!(
-                    "      sudo apt install nodejs    (Debian/Ubuntu) — or your distro's equivalent"
+                    "{}",
+                    cli_text(
+                        "      sudo apt install nodejs    (Debian/Ubuntu) — or your distro's equivalent"
+                    )
                 ),
                 "windows" => {
                     println!("      winget install OpenJS.NodeJS   (or download from nodejs.org)")
@@ -2913,18 +3060,25 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
 
     match crate::dependencies::resolve_pandoc() {
         Some(_) => println!(
-            "  {} pandoc: present → pandoc_convert tool registered",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            "  {} pandoc: present {} pandoc_convert tool registered",
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+            cli_arrow_symbol(),
         ),
         None => {
-            println!("  {} pandoc: not found (optional)", "·".dimmed(),);
+            println!(
+                "  {} pandoc: not found (optional)",
+                cli_bullet_symbol().dimmed(),
+            );
             println!(
                 "    pandoc_convert tool is NOT advertised to the model. Install pandoc to enable:"
             );
             match std::env::consts::OS {
                 "macos" => println!("      brew install pandoc"),
                 "linux" => println!(
-                    "      sudo apt install pandoc    (Debian/Ubuntu) — or your distro's equivalent"
+                    "{}",
+                    cli_text(
+                        "      sudo apt install pandoc    (Debian/Ubuntu) — or your distro's equivalent"
+                    )
                 ),
                 "windows" => {
                     println!("      winget install JohnMacFarlane.Pandoc")
@@ -2938,34 +3092,43 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         Some(_) => {
             if cfg!(target_os = "macos") {
                 println!(
-                    "  {} OCR: macOS Vision + tesseract available → image_ocr/read_file screenshot OCR enabled",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                    "  {} OCR: macOS Vision + tesseract available {} image_ocr/read_file screenshot OCR enabled",
+                    cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+                    cli_arrow_symbol(),
                 );
             } else {
                 println!(
-                    "  {} tesseract: present → image_ocr/read_file screenshot OCR enabled",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                    "  {} tesseract: present {} image_ocr/read_file screenshot OCR enabled",
+                    cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+                    cli_arrow_symbol(),
                 );
             }
         }
         None => {
             if cfg!(target_os = "macos") {
                 println!(
-                    "  {} OCR: macOS Vision available → image_ocr/read_file screenshot OCR enabled",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                    "  {} OCR: macOS Vision available {} image_ocr/read_file screenshot OCR enabled",
+                    cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+                    cli_arrow_symbol(),
                 );
                 println!(
                     "    tesseract not found (optional; install only for alternate OCR packs)."
                 );
             } else {
-                println!("  {} tesseract: not found (optional)", "·".dimmed(),);
+                println!(
+                    "  {} tesseract: not found (optional)",
+                    cli_bullet_symbol().dimmed(),
+                );
                 println!(
                     "    image_ocr tool is NOT advertised to the model. Install tesseract to enable:"
                 );
                 match std::env::consts::OS {
                     "macos" => println!("      brew install tesseract"),
                     "linux" => println!(
-                        "      sudo apt install tesseract-ocr    (Debian/Ubuntu) — or your distro's equivalent"
+                        "{}",
+                        cli_text(
+                            "      sudo apt install tesseract-ocr    (Debian/Ubuntu) — or your distro's equivalent"
+                        )
                     ),
                     "windows" => println!("      winget install UB-Mannheim.TesseractOCR"),
                     other => {
@@ -2989,13 +3152,17 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         Some(_) => {
             if prefer_external {
                 println!(
-                    "  {} pdftotext: available → read_file routes PDFs through Poppler (prefer_external_pdftotext = true)",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                    "  {} pdftotext: available {} read_file routes PDFs through Poppler (prefer_external_pdftotext = true)",
+                    cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+                    cli_arrow_symbol(),
                 );
             } else {
                 println!(
-                    "  {} pdftotext: available (optional — pure-Rust extractor is the default in v0.8.32)",
-                    "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                    "{}",
+                    cli_text(format!(
+                        "  {} pdftotext: available (optional — pure-Rust extractor is the default in v0.8.32)",
+                        cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
+                    ))
                 );
                 println!(
                     "    Set `prefer_external_pdftotext = true` in settings.toml for column-heavy PDFs."
@@ -3005,8 +3172,9 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         None => {
             if prefer_external {
                 println!(
-                    "  {} pdftotext: not found, but `prefer_external_pdftotext = true` is set → PDF reads will return `binary_unavailable`",
-                    "✗".truecolor(red_r, red_g, red_b),
+                    "  {} pdftotext: not found, but `prefer_external_pdftotext = true` is set {} PDF reads will return `binary_unavailable`",
+                    cli_error_symbol().truecolor(red_r, red_g, red_b),
+                    cli_arrow_symbol(),
                 );
                 println!(
                     "    Either install Poppler or unset `prefer_external_pdftotext` to fall back to the bundled pure-Rust extractor."
@@ -3023,8 +3191,11 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
                 }
             } else {
                 println!(
-                    "  {} pdftotext: not found (optional — pure-Rust extractor is the default in v0.8.32)",
-                    "·".dimmed(),
+                    "{}",
+                    cli_text(format!(
+                        "  {} pdftotext: not found (optional — pure-Rust extractor is the default in v0.8.32)",
+                        cli_bullet_symbol().dimmed(),
+                    ))
                 );
                 println!(
                     "    Install Poppler only if you want to opt into pdftotext for column-heavy PDFs."
@@ -3043,8 +3214,9 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     let mut any_quirk = false;
     if matches!(term_program.as_str(), "vscode" | "ghostty") {
         println!(
-            "  {} TERM_PROGRAM={} → low_motion + fancy_animations=false (auto)",
-            "•".truecolor(sky_r, sky_g, sky_b),
+            "  {} TERM_PROGRAM={} {} low_motion + fancy_animations=false (auto)",
+            cli_bullet_symbol().truecolor(sky_r, sky_g, sky_b),
+            cli_arrow_symbol(),
             term_program
         );
         any_quirk = true;
@@ -3054,8 +3226,9 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         || std::env::var_os("SSH_TTY").is_some_and(|v| !v.is_empty())
     {
         println!(
-            "  {} SSH/Termius session → low_motion + fancy_animations=false (auto, #1433)",
-            "•".truecolor(sky_r, sky_g, sky_b)
+            "  {} SSH/Termius session {} low_motion + fancy_animations=false (auto, #1433)",
+            cli_bullet_symbol().truecolor(sky_r, sky_g, sky_b),
+            cli_arrow_symbol()
         );
         any_quirk = true;
     }
@@ -3063,22 +3236,24 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
         || std::env::var_os("PTYXIS_VERSION").is_some_and(|v| !v.is_empty())
     {
         println!(
-            "  {} Ptyxis detected → synchronized_output=off (auto, v0.8.31)",
-            "•".truecolor(sky_r, sky_g, sky_b)
+            "  {} Ptyxis detected {} synchronized_output=off (auto, v0.8.31)",
+            cli_bullet_symbol().truecolor(sky_r, sky_g, sky_b),
+            cli_arrow_symbol()
         );
         any_quirk = true;
     }
     if crate::settings::detected_legacy_windows_console_host() {
         println!(
-            "  {} legacy Windows console host → low_motion + fancy_animations=false + synchronized_output=off (auto)",
-            "•".truecolor(sky_r, sky_g, sky_b)
+            "  {} legacy Windows console host {} low_motion + fancy_animations=false + synchronized_output=off (auto)",
+            cli_bullet_symbol().truecolor(sky_r, sky_g, sky_b),
+            cli_arrow_symbol()
         );
         any_quirk = true;
     }
     if !any_quirk {
         println!(
             "  {} no env-driven terminal-quirk overrides active",
-            "·".dimmed()
+            cli_bullet_symbol().dimmed()
         );
     }
 
@@ -3092,13 +3267,13 @@ async fn run_doctor(config: &Config, workspace: &Path, config_path_override: Opt
     if let Some(kind) = sandbox {
         println!(
             "  {} sandbox available: {}",
-            "✓".truecolor(aqua_r, aqua_g, aqua_b),
+            cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
             kind
         );
     } else {
         println!(
             "  {} sandbox not available (commands run best-effort)",
-            "!".truecolor(sky_r, sky_g, sky_b)
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b)
         );
     }
 
@@ -3901,7 +4076,7 @@ fn init_project() -> Result<()> {
     if agents_path.exists() {
         println!(
             "{} AGENTS.md already exists at {}",
-            "!".truecolor(sky_r, sky_g, sky_b),
+            cli_warning_symbol().truecolor(sky_r, sky_g, sky_b),
             agents_path.display()
         );
         return Ok(());
@@ -3911,7 +4086,7 @@ fn init_project() -> Result<()> {
         Ok(path) => {
             println!(
                 "{} Created {}",
-                "✓".truecolor(aqua_r, aqua_g, aqua_b),
+                cli_success_symbol().truecolor(aqua_r, aqua_g, aqua_b),
                 path.display()
             );
             println!();
@@ -3921,7 +4096,7 @@ fn init_project() -> Result<()> {
         Err(e) => {
             println!(
                 "{} Failed to create AGENTS.md: {}",
-                "✗".truecolor(red_r, red_g, red_b),
+                cli_error_symbol().truecolor(red_r, red_g, red_b),
                 e
             );
         }
@@ -4035,7 +4210,8 @@ fn fork_session(session_id: Option<String>, last: bool, workspace: &Path) -> Res
         format!("\"{source_title}\"")
     };
     println!(
-        "Forked {source_label} ({source_id}) → new session {new_id}",
+        "Forked {source_label} ({source_id}) {} new session {new_id}",
+        cli_arrow_symbol(),
         source_id = truncate_id(&saved.metadata.id),
         new_id = truncate_id(&forked.metadata.id),
     );
@@ -4314,8 +4490,9 @@ fn format_pr_prompt(number: u32, view: &GhPullRequest, diff: &str) -> String {
             .find(|&i| diff.is_char_boundary(i))
             .unwrap_or(0);
         format!(
-            "{}\n\n[…diff truncated at {} KiB; ask me to fetch more if needed]\n",
+            "{}\n\n[{}diff truncated at {} KiB; ask me to fetch more if needed]\n",
             &diff[..cut],
+            cli_ellipsis_symbol(),
             MAX_DIFF_BYTES / 1024
         )
     } else {
@@ -4332,13 +4509,13 @@ fn format_pr_prompt(number: u32, view: &GhPullRequest, diff: &str) -> String {
         view.title.trim().to_string()
     };
     let branches = match (view.base.is_empty(), view.head.is_empty()) {
-        (false, false) => format!("{} ← {}", view.base, view.head),
+        (false, false) => format!("{} {} {}", view.base, cli_left_arrow_symbol(), view.head),
         (false, true) => view.base.clone(),
         (true, false) => view.head.clone(),
         _ => "(unknown)".to_string(),
     };
     format!(
-        "Review PR #{number} — {title}\n\
+        "Review PR #{number} {separator} {title}\n\
          \n\
          URL: {url}\n\
          Branches: {branches}\n\
@@ -4349,9 +4526,10 @@ fn format_pr_prompt(number: u32, view: &GhPullRequest, diff: &str) -> String {
          \n\
          ## Diff\n\
          \n\
-         ```diff\n\
+        ```diff\n\
          {diff_section}\n\
          ```\n",
+        separator = cli_title_separator_symbol(),
         url = if view.url.is_empty() {
             "(unavailable)"
         } else {
@@ -4733,9 +4911,9 @@ fn doctor_check_mcp_server(server: &McpServerConfig) -> McpServerDoctorStatus {
         if is_absolute {
             McpServerDoctorStatus::Ok(format!("self-hosted MCP server ({cmd} {args_str})"))
         } else {
-            McpServerDoctorStatus::Warning(format!(
+            McpServerDoctorStatus::Warning(cli_text(format!(
                 "self-hosted MCP server uses relative command \"{cmd}\" — consider using an absolute path"
-            ))
+            )))
         }
     } else {
         McpServerDoctorStatus::Ok(format!(
@@ -5131,9 +5309,12 @@ fn merge_project_config(config: &mut Config, workspace: &Path) {
     for key in DENY_AT_PROJECT_SCOPE {
         if table.contains_key(*key) {
             eprintln!(
-                "warning: project-scope config key `{key}` is ignored — \
-                 set it in `~/.codewhale/config.toml` instead. \
-                 (See #417 for the deny-list rationale.)"
+                "{}",
+                cli_text(format!(
+                    "warning: project-scope config key `{key}` is ignored — \
+                     set it in `~/.codewhale/config.toml` instead. \
+                     (See #417 for the deny-list rationale.)"
+                ))
             );
         }
     }
@@ -5162,9 +5343,12 @@ fn merge_project_config(config: &mut Config, workspace: &Path) {
             config.approval_policy = Some(v.to_string());
         } else {
             eprintln!(
-                "warning: project-scope `approval_policy = \"{v}\"` is ignored — \
-                 project config can only tighten the user's approval policy. \
-                 (See #417.)"
+                "{}",
+                cli_text(format!(
+                    "warning: project-scope `approval_policy = \"{v}\"` is ignored — \
+                     project config can only tighten the user's approval policy. \
+                     (See #417.)"
+                ))
             );
         }
     }
@@ -5176,9 +5360,12 @@ fn merge_project_config(config: &mut Config, workspace: &Path) {
             config.sandbox_mode = Some(v.to_string());
         } else {
             eprintln!(
-                "warning: project-scope `sandbox_mode = \"{v}\"` is ignored — \
-                 project config can only tighten the user's sandbox mode. \
-                 (See #417.)"
+                "{}",
+                cli_text(format!(
+                    "warning: project-scope `sandbox_mode = \"{v}\"` is ignored — \
+                     project config can only tighten the user's sandbox mode. \
+                     (See #417.)"
+                ))
             );
         }
     }
@@ -7923,6 +8110,7 @@ mod setup_helper_tests {
 #[cfg(test)]
 mod pr_prompt_tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
 
     fn sample_pr() -> GhPullRequest {
         GhPullRequest {
@@ -7937,13 +8125,29 @@ mod pr_prompt_tests {
     #[test]
     fn format_pr_prompt_includes_title_url_branches_body_and_diff() {
         let prompt = format_pr_prompt(123, &sample_pr(), "diff --git a/x b/x\n+y");
-        assert!(prompt.contains("Review PR #123 — Add cool feature"));
+        assert!(prompt.contains("Review PR #123"));
+        assert!(prompt.contains("Add cool feature"));
         assert!(prompt.contains("URL: https://github.com/example/repo/pull/123"));
-        assert!(prompt.contains("Branches: main ← feat/cool"));
+        assert!(prompt.contains("Branches: main"));
+        assert!(prompt.contains("feat/cool"));
         assert!(prompt.contains("Closes #99."));
         assert!(prompt.contains("- bullet a"));
         assert!(prompt.contains("```diff"));
         assert!(prompt.contains("diff --git a/x b/x"));
+    }
+
+    #[test]
+    fn format_pr_prompt_uses_ascii_markers_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let prompt = format_pr_prompt(123, &sample_pr(), &"X".repeat(220 * 1024));
+
+        assert!(prompt.contains("Review PR #123 - Add cool feature"));
+        assert!(prompt.contains("Branches: main <- feat/cool"));
+        assert!(prompt.contains("[...diff truncated"));
+        assert!(!prompt.contains('\u{2014}'), "got: {prompt}");
+        assert!(!prompt.contains('\u{2190}'), "got: {prompt}");
+        assert!(!prompt.contains('\u{2026}'), "got: {prompt}");
     }
 
     #[test]
@@ -7970,7 +8174,7 @@ mod pr_prompt_tests {
         let mut diff = "X".repeat(190 * 1024);
         diff.push_str(&"🚀".repeat(5_000));
         let prompt = format_pr_prompt(1, &sample_pr(), &diff);
-        assert!(prompt.contains("[…diff truncated"));
+        assert!(prompt.contains(&format!("[{}diff truncated", cli_ellipsis_symbol())));
         assert!(prompt.contains("at 200 KiB"));
         // Ensure we didn't slice mid-codepoint — the result still
         // round-trips as valid UTF-8 (it's a String, so this is by

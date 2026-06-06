@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::palette;
 use crate::tui::app::{App, MentionCompletionCache};
 use crate::working_set::Workspace;
 
@@ -42,6 +43,14 @@ pub const MAX_DIRECTORY_MENTION_ENTRIES: usize = 80;
 /// Maximum file-mention completion candidates to consider per keypress. Caps
 /// the cost of walking large workspaces; subsequent keystrokes narrow further.
 const FILE_MENTION_COMPLETION_LIMIT: usize = 64;
+
+fn file_mention_ellipsis() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
 
 /// Compact composer preview row for local context that will be included or
 /// skipped when the user submits the current input.
@@ -317,7 +326,7 @@ pub fn try_autocomplete_file_mention(app: &mut App) -> bool {
     let shared = longest_common_prefix(&candidate_refs);
     if shared.len() > partial.len() {
         replace_file_mention(app, byte_start, &partial, shared);
-        app.status_message = Some(format!("@{shared}…"));
+        app.status_message = Some(format!("@{shared}{}", file_mention_ellipsis()));
         return true;
     }
     let preview = candidates
@@ -886,6 +895,15 @@ mod tests {
     /// #101 regression — workspace-vs-cwd divergence: `@bar.txt` typed from
     /// the cwd `<root>/sub` MUST resolve to `<root>/sub/bar.txt`, never to
     /// `<root>/bar.txt` (which doesn't exist).
+    #[test]
+    fn file_mention_ellipsis_has_ascii_fallback() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(file_mention_ellipsis(), "...");
+        } else {
+            assert_eq!(file_mention_ellipsis(), "\u{2026}");
+        }
+    }
+
     #[test]
     fn cwd_pass_resolves_when_workspace_pass_misses() {
         let tmp = TempDir::new().expect("tempdir");

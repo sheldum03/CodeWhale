@@ -187,11 +187,7 @@ async fn bounded_body_excerpt(response: reqwest::Response, max_bytes: usize) -> 
         return "<no body>".to_string();
     }
     let trimmed: String = body_text.chars().take(max_bytes).collect();
-    let suffix = if body_text.len() > trimmed.len() {
-        "…"
-    } else {
-        ""
-    };
+    let suffix = truncation_suffix(body_text.len() > trimmed.len());
     let one_line = trimmed.replace(['\n', '\r'], " ");
     format!("{}{}", redact_body_preview(&one_line), suffix)
 }
@@ -204,12 +200,26 @@ fn invalid_json_preview(bytes: &[u8]) -> String {
 
     let trimmed: String = body_text.chars().take(ERROR_BODY_PREVIEW_BYTES).collect();
     let suffix = if body_text.chars().count() > ERROR_BODY_PREVIEW_BYTES {
-        "…"
+        truncation_suffix(true)
     } else {
         ""
     };
     let one_line = trimmed.replace(['\n', '\r'], " ");
     format!("{}{}", redact_body_preview(&one_line), suffix)
+}
+
+fn truncation_suffix(truncated: bool) -> &'static str {
+    truncation_suffix_with_ascii(truncated, crate::palette::ascii_ui_enabled())
+}
+
+fn truncation_suffix_with_ascii(truncated: bool, ascii: bool) -> &'static str {
+    if !truncated {
+        ""
+    } else if ascii {
+        "..."
+    } else {
+        "…"
+    }
 }
 
 // === Configuration Types ===
@@ -4065,6 +4075,13 @@ mod tests {
             !preview.contains("PLACEHOLDER_TOKEN") && !preview.contains("PLACEHOLDER_KEY"),
             "secret leaked: {preview}"
         );
+    }
+
+    #[test]
+    fn truncation_suffix_uses_ascii_ellipsis_when_enabled() {
+        assert_eq!(truncation_suffix_with_ascii(true, true), "...");
+        assert_eq!(truncation_suffix_with_ascii(true, false), "…");
+        assert_eq!(truncation_suffix_with_ascii(false, true), "");
     }
 
     /// #420: `StdioTransport::shutdown` reaps the child process by sending

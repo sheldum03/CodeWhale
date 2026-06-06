@@ -27,6 +27,8 @@ use std::fmt;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{style::Style, text::Span};
 
+use crate::palette;
+
 // Compile-time platform detection. The `#[cfg(test)]` arm forces the macOS
 // rendering during `cargo test` so unit tests are deterministic regardless of
 // the host they run on (CI hits Ubuntu, macOS, and Windows).
@@ -39,6 +41,14 @@ const ALT_PREFIX: &str = "alt+";
 
 const CTRL_PREFIX: &str = "ctrl+";
 const SHIFT_PREFIX: &str = "shift+";
+
+fn alt_prefix() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "alt+"
+    } else {
+        ALT_PREFIX
+    }
+}
 
 /// A typed representation of a single chord (key + modifiers).
 ///
@@ -101,9 +111,17 @@ fn modifiers_to_string(modifiers: KeyModifiers) -> String {
         result.push_str(SHIFT_PREFIX);
     }
     if modifiers.contains(KeyModifiers::ALT) {
-        result.push_str(ALT_PREFIX);
+        result.push_str(alt_prefix());
     }
     result
+}
+
+fn arrow_key_label(unicode: &'static str, ascii: &'static str) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        ascii
+    } else {
+        unicode
+    }
 }
 
 fn keycode_to_string(key: &KeyCode) -> String {
@@ -116,10 +134,10 @@ fn keycode_to_string(key: &KeyCode) -> String {
         KeyCode::Esc => "esc".to_string(),
         KeyCode::Char(' ') => "space".to_string(),
         KeyCode::Char(c) => c.to_string().to_ascii_lowercase(),
-        KeyCode::Up => "↑".to_string(),
-        KeyCode::Down => "↓".to_string(),
-        KeyCode::Left => "←".to_string(),
-        KeyCode::Right => "→".to_string(),
+        KeyCode::Up => arrow_key_label("↑", "up").to_string(),
+        KeyCode::Down => arrow_key_label("↓", "down").to_string(),
+        KeyCode::Left => arrow_key_label("←", "left").to_string(),
+        KeyCode::Right => arrow_key_label("→", "right").to_string(),
         KeyCode::PageUp => "pgup".to_string(),
         KeyCode::PageDown => "pgdn".to_string(),
         KeyCode::Home => "home".to_string(),
@@ -196,7 +214,21 @@ mod tests {
     fn plain_renders_just_the_key() {
         assert_eq!(plain(KeyCode::Enter).to_string(), "enter");
         assert_eq!(plain(KeyCode::Char(' ')).to_string(), "space");
-        assert_eq!(plain(KeyCode::Up).to_string(), "↑");
+        assert_eq!(
+            plain(KeyCode::Up).to_string(),
+            if palette::ascii_ui_enabled() { "up" } else { "↑" }
+        );
+    }
+
+    #[test]
+    fn arrow_key_labels_have_ascii_fallback() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(arrow_key_label("↑", "up"), "up");
+            assert_eq!(arrow_key_label("→", "right"), "right");
+        } else {
+            assert_eq!(arrow_key_label("↑", "up"), "↑");
+            assert_eq!(arrow_key_label("→", "right"), "→");
+        }
     }
 
     #[test]
@@ -204,8 +236,22 @@ mod tests {
         // Under cfg(test) we force the macOS prefix so test output is
         // deterministic. The non-macOS rendering is exercised in
         // `non_macos_alt_prefix` below.
-        assert_eq!(alt(KeyCode::Up).to_string(), "⌥+↑");
-        assert_eq!(alt(KeyCode::Char('p')).to_string(), "⌥+p");
+        assert_eq!(
+            alt(KeyCode::Up).to_string(),
+            if palette::ascii_ui_enabled() {
+                "alt+up"
+            } else {
+                "⌥+↑"
+            }
+        );
+        assert_eq!(
+            alt(KeyCode::Char('p')).to_string(),
+            if palette::ascii_ui_enabled() {
+                "alt+p"
+            } else {
+                "⌥+p"
+            }
+        );
     }
 
     #[test]
@@ -226,7 +272,14 @@ mod tests {
 
     #[test]
     fn ctrl_alt_combo_renders_both_modifiers() {
-        assert_eq!(ctrl_alt(KeyCode::Char('a')).to_string(), "ctrl+⌥+a");
+        assert_eq!(
+            ctrl_alt(KeyCode::Char('a')).to_string(),
+            if palette::ascii_ui_enabled() {
+                "ctrl+alt+a"
+            } else {
+                "ctrl+⌥+a"
+            }
+        );
     }
 
     #[test]
@@ -243,7 +296,14 @@ mod tests {
     #[test]
     fn span_conversion_carries_dim_style() {
         let span: Span<'static> = alt(KeyCode::Up).into();
-        assert_eq!(span.content, "⌥+↑");
+        assert_eq!(
+            span.content,
+            if palette::ascii_ui_enabled() {
+                "alt+up"
+            } else {
+                "⌥+↑"
+            }
+        );
         // The exact `Style` representation in ratatui isn't trivially
         // comparable, so we just verify the style was set (not default).
         assert_ne!(span.style, Style::default());

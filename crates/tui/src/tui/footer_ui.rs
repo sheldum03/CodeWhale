@@ -14,7 +14,7 @@ use crate::tui::key_shortcuts;
 use crate::tui::subagent_routing::{active_fanout_counts, running_agent_count};
 use crate::tui::ui::{
     active_foreground_shell_running, context_usage_snapshot, selected_detail_footer_label,
-    status_color,
+    status_color_for_theme,
 };
 use crate::tui::ui_text::{concise_shell_command_label, truncate_line_to_width};
 use crate::tui::widgets::tool_card::tool_activity_label_for_name;
@@ -40,7 +40,7 @@ pub(crate) fn render_footer(f: &mut Frame, area: Rect, app: &mut App) {
                 crate::localization::MessageId::FooterPressCtrlCAgain,
             )
             .to_string(),
-            color: palette::STATUS_WARNING,
+            color: app.ui_theme.status_warning,
         })
     } else {
         None
@@ -48,7 +48,7 @@ pub(crate) fn render_footer(f: &mut Frame, area: Rect, app: &mut App) {
     let toast = quit_prompt.or_else(|| {
         app.active_status_toast().map(|toast| FooterToast {
             text: toast.text,
-            color: status_color(toast.level),
+            color: status_color_for_theme(toast.level, &app.ui_theme),
         })
     });
 
@@ -94,7 +94,7 @@ pub(crate) fn render_footer(f: &mut Frame, area: Rect, app: &mut App) {
             label = format!("{label}  ({reason})");
         }
         props.state_label = label;
-        props.state_color = palette::DEEPSEEK_SKY;
+        props.state_color = app.ui_theme.status_working;
 
         // Water-spout frame source: wall-clock milliseconds. The sine-wave
         // math in `footer_working_strip_glyph_at` was tuned for this cadence
@@ -109,7 +109,7 @@ pub(crate) fn render_footer(f: &mut Frame, area: Rect, app: &mut App) {
         && let Some(label) = selected_detail_footer_label(app)
     {
         props.state_label = label;
-        props.state_color = palette::TEXT_MUTED;
+        props.state_color = app.ui_theme.text_muted;
     }
 
     let widget = FooterWidget::new(props);
@@ -268,7 +268,7 @@ pub(crate) fn active_subagent_status_label(app: &App) -> Option<String> {
         parts.push(elapsed);
     }
     parts.push("Alt+4".to_string());
-    Some(parts.join(" \u{00B7} "))
+    Some(parts.join(crate::tui::widgets::footer_separator()))
 }
 
 #[derive(Default)]
@@ -342,7 +342,7 @@ pub(crate) fn active_tool_status_label(app: &App) -> Option<String> {
         parts.push("Ctrl+B shell".to_string());
     }
     parts.push(key_shortcuts::tool_details_shortcut_label().to_string());
-    Some(parts.join(" \u{00B7} "))
+    Some(parts.join(crate::tui::widgets::footer_separator()))
 }
 
 fn collect_active_tool_status(cell: &HistoryCell, snapshot: &mut ActiveToolStatusSnapshot) {
@@ -451,7 +451,11 @@ pub(crate) fn render_footer_from(
         Vec::new()
     };
     let agents = if has(S::Agents) {
-        crate::tui::widgets::footer_agents_chip(running_agent_count(app), app.ui_locale)
+        crate::tui::widgets::footer_agents_chip_with_color(
+            running_agent_count(app),
+            app.ui_locale,
+            app.ui_theme.status_working,
+        )
     } else {
         Vec::new()
     };
@@ -506,7 +510,11 @@ pub(crate) fn render_footer_from(
 
     // Shell-running chip: visible whenever a foreground shell command is
     // active, regardless of user-configured status items.
-    let shell_chip = crate::tui::widgets::footer_shell_chip(active_foreground_shell_running(app));
+    let shell_chip = crate::tui::widgets::footer_shell_chip_with_color(
+        active_foreground_shell_running(app),
+        app.ui_theme.status_warning,
+        palette::ascii_ui_enabled(),
+    );
 
     // Right-cluster extension chips: append in `items` order so user
     // ordering is preserved across the new variants.
@@ -574,11 +582,11 @@ pub(crate) fn footer_context_percent_spans(app: &App) -> Vec<Span<'static>> {
         return Vec::new();
     };
     let color = if percent >= 95.0 {
-        palette::STATUS_ERROR
+        app.ui_theme.error_fg
     } else if percent >= 85.0 {
-        palette::STATUS_WARNING
+        app.ui_theme.status_warning
     } else {
-        palette::TEXT_MUTED
+        app.ui_theme.text_muted
     };
     vec![Span::styled(
         format!("active ctx {percent:.0}%"),
@@ -593,7 +601,7 @@ pub(crate) fn footer_cost_spans(app: &App) -> Vec<Span<'static>> {
     }
     let mut spans = vec![Span::styled(
         app.format_cost_amount(displayed_cost),
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(app.ui_theme.text_muted),
     )];
     // Append cache-savings hint when the last turn had cache hits that
     // saved money (#2038).
@@ -601,8 +609,12 @@ pub(crate) fn footer_cost_spans(app: &App) -> Vec<Span<'static>> {
         && saved > 0.0
     {
         spans.push(Span::styled(
-            format!(" · saved {}", app.format_cost_amount(saved)),
-            Style::default().fg(palette::STATUS_SUCCESS),
+            format!(
+                "{}saved {}",
+                crate::tui::widgets::footer_separator(),
+                app.format_cost_amount(saved)
+            ),
+            Style::default().fg(app.ui_theme.success),
         ));
     }
     spans
@@ -621,10 +633,7 @@ pub(crate) fn footer_balance_spans(app: &App) -> Vec<Span<'static>> {
         Some(total) if total > 0.0 => total,
         _ => return Vec::new(),
     };
-    let currency = match info.currency.as_str() {
-        "CNY" | "cny" => "¥",
-        _ => "$",
-    };
+    let currency = footer_currency_symbol(&info.currency);
     let prefix = app.tr(MessageId::FooterBalancePrefix);
     let label = if total >= 1000.0 {
         format!("{prefix} {currency}{total:.0}")
@@ -635,8 +644,16 @@ pub(crate) fn footer_balance_spans(app: &App) -> Vec<Span<'static>> {
     };
     vec![Span::styled(
         label,
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(app.ui_theme.text_muted),
     )]
+}
+
+fn footer_currency_symbol(currency: &str) -> &'static str {
+    match currency {
+        "CNY" | "cny" if palette::ascii_ui_enabled() => "CNY ",
+        "CNY" | "cny" => "\u{00A5}",
+        _ => "$",
+    }
 }
 
 pub(crate) fn should_show_footer_cost(displayed_cost: f64) -> bool {
@@ -655,7 +672,10 @@ pub(crate) fn footer_session_tokens_spans(app: &App) -> Vec<Span<'static>> {
     let total = u64::from(session.total_input_tokens)
         .saturating_add(u64::from(session.total_output_tokens));
     let text = format!("tok {}", format_token_count_compact(total));
-    vec![Span::styled(text, Style::default().fg(palette::TEXT_MUTED))]
+    vec![Span::styled(
+        text,
+        Style::default().fg(app.ui_theme.text_muted),
+    )]
 }
 
 /// Test-only helper retained as a parity reference for `FooterWidget`'s
@@ -669,8 +689,11 @@ pub(crate) fn footer_auxiliary_spans(app: &App, max_width: usize) -> Vec<Span<'s
     // prefix stability, coherence, in-flight sub-agents, reasoning
     // replay tokens, cache hit rate, and session cost.
     let coherence_spans = footer_coherence_spans(app);
-    let agents_spans =
-        crate::tui::widgets::footer_agents_chip(running_agent_count(app), app.ui_locale);
+    let agents_spans = crate::tui::widgets::footer_agents_chip_with_color(
+        running_agent_count(app),
+        app.ui_locale,
+        app.ui_theme.status_working,
+    );
     let replay_spans = footer_reasoning_replay_spans(app);
     let cache_spans = footer_cache_spans(app);
     let cost_spans = footer_cost_spans(app);
@@ -679,13 +702,17 @@ pub(crate) fn footer_auxiliary_spans(app: &App, max_width: usize) -> Vec<Span<'s
         .map(|_| {
             let (label, color) = format_helpers::prefix_stability_chip(app).unwrap_or((
                 "cache prefix --".to_string(),
-                ratatui::style::Color::DarkGray,
+                app.ui_theme.text_muted,
             ));
             vec![Span::styled(label, Style::default().fg(color))]
         })
         .unwrap_or_default();
 
-    let shell_spans = crate::tui::widgets::footer_shell_chip(active_foreground_shell_running(app));
+    let shell_spans = crate::tui::widgets::footer_shell_chip_with_color(
+        active_foreground_shell_running(app),
+        app.ui_theme.status_warning,
+        palette::ascii_ui_enabled(),
+    );
 
     let parts: Vec<&Vec<Span<'static>>> = [
         &coherence_spans,
@@ -725,9 +752,9 @@ pub(crate) fn footer_coherence_spans(app: &App) -> Vec<Span<'static>> {
     // suppress it; the active interventions get their own visible label.
     let (label, color) = match app.coherence_state {
         CoherenceState::Healthy | CoherenceState::GettingCrowded => return Vec::new(),
-        CoherenceState::RefreshingContext => ("refreshing context", palette::STATUS_WARNING),
-        CoherenceState::VerifyingRecentWork => ("verifying", palette::DEEPSEEK_SKY),
-        CoherenceState::ResettingPlan => ("resetting plan", palette::STATUS_ERROR),
+        CoherenceState::RefreshingContext => ("refreshing context", app.ui_theme.status_warning),
+        CoherenceState::VerifyingRecentWork => ("verifying", app.ui_theme.status_working),
+        CoherenceState::ResettingPlan => ("resetting plan", app.ui_theme.error_fg),
     };
 
     vec![Span::styled(label.to_string(), Style::default().fg(color))]
@@ -740,7 +767,7 @@ pub(crate) fn footer_cache_spans(app: &App) -> Vec<Span<'static>> {
     let Some(hit_tokens) = app.session.last_prompt_cache_hit_tokens else {
         return vec![Span::styled(
             "Cache: unavailable",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(app.ui_theme.text_muted),
         )];
     };
     let miss_tokens = app
@@ -770,13 +797,13 @@ pub(crate) fn footer_cache_spans(app: &App) -> Vec<Span<'static>> {
         .prefix_stability_pct
         .is_some_and(|pct| pct >= 95 && app.prefix_change_count == 0);
     let color = if percent > 80.0 {
-        palette::STATUS_SUCCESS
+        app.ui_theme.success
     } else if percent >= 40.0 {
-        palette::STATUS_WARNING
+        app.ui_theme.status_warning
     } else if prefix_is_stable {
-        palette::TEXT_MUTED
+        app.ui_theme.text_muted
     } else {
-        palette::STATUS_ERROR
+        app.ui_theme.error_fg
     };
     vec![Span::styled(
         format!("Cache: {percent:.1}% hit | hit {hit_tokens} | miss {miss_tokens}"),
@@ -801,9 +828,9 @@ pub(crate) fn footer_reasoning_replay_spans(app: &App) -> Vec<Span<'static>> {
     let label = format!("rsn {}", format_token_count_compact(u64::from(replay)));
     let color = match app.session.last_prompt_tokens {
         Some(input) if input > 0 && f64::from(replay) / f64::from(input) > 0.5 => {
-            palette::STATUS_WARNING
+            app.ui_theme.status_warning
         }
-        _ => palette::TEXT_MUTED,
+        _ => app.ui_theme.text_muted,
     };
     vec![Span::styled(label, Style::default().fg(color))]
 }
@@ -816,7 +843,7 @@ pub(crate) fn footer_status_line_spans(app: &App, max_width: usize) -> Vec<Span<
 
     let (mode_label, mode_color) = footer_mode_style(app);
     let (status_label, status_color) = footer_state_label(app);
-    let sep = " \u{00B7} ";
+    let sep = crate::tui::widgets::footer_separator();
     let show_status = status_label != "ready";
 
     let fixed_width = mode_label.width()
@@ -859,10 +886,20 @@ pub(crate) fn footer_status_line_spans(app: &App, max_width: usize) -> Vec<Span<
 
 pub(crate) fn footer_state_label(app: &App) -> (&'static str, ratatui::style::Color) {
     if app.is_compacting {
-        return ("compacting \u{238B}", app.ui_theme.status_warning);
+        let label = if palette::ascii_ui_enabled() {
+            "compacting"
+        } else {
+            "compacting \u{238B}"
+        };
+        return (label, app.ui_theme.status_warning);
     }
     if app.is_purging {
-        return ("purging \u{238B}", app.ui_theme.status_warning);
+        let label = if palette::ascii_ui_enabled() {
+            "purging"
+        } else {
+            "purging \u{238B}"
+        };
+        return (label, app.ui_theme.status_warning);
     }
     // Note: we deliberately do NOT show a "thinking" label for `is_loading`.
     // The animated water-spout strip in the footer's spacer is the visual

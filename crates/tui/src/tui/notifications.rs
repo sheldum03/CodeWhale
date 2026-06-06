@@ -264,11 +264,24 @@ pub fn clear_taskbar_progress() {
 /// Uses the DeepSeek whale emoji (🐳 spouting, 🐋 resting) to match the
 /// existing header status indicator in the TUI.
 const TITLE_FRAMES: &[&str] = &["🐳", "🐋", "🐳", "🐋"];
+const ASCII_TITLE_FRAMES: &[&str] = &["CW", "CW.", "CW..", "CW."];
 const TITLE_ANIMATION_INTERVAL: Duration = Duration::from_millis(800);
 
 /// Shared flag controlling the title animation loop. Set to `true` by
 /// `start_title_animation()`, cleared by `stop_title_animation()`.
 static TITLE_ANIMATION_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Theme-level title style override. The engine starts title animation outside
+/// the TUI render path, so the UI keeps this flag in sync as the active theme
+/// changes.
+static DEEPSEEK_SHELL_TITLE_VISUAL: AtomicBool = AtomicBool::new(false);
+
+pub fn set_title_visual_theme(theme_id: crate::palette::ThemeId) {
+    DEEPSEEK_SHELL_TITLE_VISUAL.store(
+        theme_id == crate::palette::ThemeId::DeepSeekShell,
+        Ordering::SeqCst,
+    );
+}
 
 /// Write OSC 0 (set window title) sequence.
 fn set_terminal_title(title: &str) {
@@ -281,6 +294,25 @@ fn set_terminal_title(title: &str) {
 /// Tracks whether the ✅ completion marker was set, so
 /// `reset_title_on_interaction()` can skip redundant writes.
 static COMPLETION_MARKER_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn title_animation_frame(frame: usize) -> &'static str {
+    let frames = if crate::palette::ascii_ui_enabled()
+        || DEEPSEEK_SHELL_TITLE_VISUAL.load(Ordering::SeqCst)
+    {
+        ASCII_TITLE_FRAMES
+    } else {
+        TITLE_FRAMES
+    };
+    frames[frame % frames.len()]
+}
+
+fn completion_title() -> &'static str {
+    if crate::palette::ascii_ui_enabled() || DEEPSEEK_SHELL_TITLE_VISUAL.load(Ordering::SeqCst) {
+        "CodeWhale ready"
+    } else {
+        "✅ CodeWhale"
+    }
+}
 
 /// Start an animated terminal title spinner.
 ///
@@ -307,7 +339,7 @@ pub fn start_title_animation(original: &str) {
             if !TITLE_ANIMATION_RUNNING.load(Ordering::SeqCst) {
                 break;
             }
-            let spinner = TITLE_FRAMES[frame % TITLE_FRAMES.len()];
+            let spinner = title_animation_frame(frame);
             set_terminal_title(&format!("{spinner} {base}"));
             frame += 1;
             tokio::time::sleep(TITLE_ANIMATION_INTERVAL).await;
@@ -329,7 +361,8 @@ pub fn stop_title_animation() {
     // terminal-level visual indicator (flash/icon).
     let mode = COMPLETION_SOUND_MODE.load(Ordering::SeqCst);
     if mode == 1 {
-        set_terminal_title("✅ CodeWhale");
+        COMPLETION_MARKER_SHOWN.store(true, Ordering::SeqCst);
+        set_terminal_title(completion_title());
     }
     play_completion_sound();
 }
@@ -739,6 +772,8 @@ pub fn text_summary(text: &str) -> Option<String> {
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
+    use crate::test_support::{EnvVarGuard, lock_test_env};
+
     use super::*;
 
     /// Serialise all tests that mutate `TERM_PROGRAM` to prevent data races
@@ -767,6 +802,41 @@ mod tests {
             &mut buf,
         );
         buf
+    }
+
+    #[test]
+    fn title_animation_uses_ascii_frames_when_ascii_ui_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        set_title_visual_theme(crate::palette::ThemeId::Whale);
+
+        assert_eq!(title_animation_frame(0), "CW");
+        assert_eq!(title_animation_frame(1), "CW.");
+        assert_eq!(completion_title(), "CodeWhale ready");
+    }
+
+    #[test]
+    fn title_animation_keeps_unicode_frames_by_default() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::remove("CODEWHALE_ASCII_UI");
+        set_title_visual_theme(crate::palette::ThemeId::Whale);
+
+        assert_eq!(title_animation_frame(0), "🐳");
+        assert_eq!(title_animation_frame(1), "🐋");
+        assert_eq!(completion_title(), "✅ CodeWhale");
+    }
+
+    #[test]
+    fn title_animation_uses_plain_frames_for_deepseek_shell() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::remove("CODEWHALE_ASCII_UI");
+        set_title_visual_theme(crate::palette::ThemeId::DeepSeekShell);
+
+        assert_eq!(title_animation_frame(0), "CW");
+        assert_eq!(title_animation_frame(1), "CW.");
+        assert_eq!(completion_title(), "CodeWhale ready");
+
+        set_title_visual_theme(crate::palette::ThemeId::Whale);
     }
 
     #[test]

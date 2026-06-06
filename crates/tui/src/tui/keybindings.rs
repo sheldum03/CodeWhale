@@ -69,6 +69,21 @@ pub struct KeybindingEntry {
     pub section: KeybindingSection,
 }
 
+pub fn display_chord(chord: &str) -> String {
+    display_chord_for_ascii(chord, crate::palette::ascii_ui_enabled())
+}
+
+fn display_chord_for_ascii(chord: &str, ascii: bool) -> String {
+    if !ascii {
+        return chord.to_string();
+    }
+    chord
+        .replace('\u{2191}', "Up")
+        .replace('\u{2193}', "Down")
+        .replace('\u{2190}', "Left")
+        .replace('\u{2192}', "Right")
+}
+
 /// Canonical list of keybindings shown in the help overlay.
 ///
 /// Strings are written in the same notation the existing help screen uses so
@@ -337,6 +352,38 @@ mod tests {
                 .any(|entry| entry.chord.contains('?') && entry.section == KeybindingSection::Help),
             "`?` must remain documented as the help-toggle chord"
         );
+    }
+
+    #[test]
+    fn display_chord_has_ascii_arrow_fallback() {
+        assert_eq!(
+            display_chord_for_ascii("Ctrl+\u{2191} / Ctrl+\u{2193}", true),
+            "Ctrl+Up / Ctrl+Down"
+        );
+        assert_eq!(
+            display_chord_for_ascii("\u{2190} / \u{2192}", true),
+            "Left / Right"
+        );
+        assert_eq!(
+            display_chord_for_ascii("Ctrl+\u{2191} / Ctrl+\u{2193}", false),
+            "Ctrl+\u{2191} / Ctrl+\u{2193}"
+        );
+    }
+
+    #[test]
+    fn all_catalog_chords_render_ascii_in_ascii_mode() {
+        for entry in KEYBINDINGS {
+            let rendered = display_chord_for_ascii(entry.chord, true);
+            assert!(
+                rendered.is_ascii(),
+                "ASCII keybinding label should not contain non-ASCII glyphs: {rendered:?}"
+            );
+            let arrows = ['\u{2190}', '\u{2191}', '\u{2192}', '\u{2193}'];
+            assert!(
+                !arrows.iter().any(|arrow| rendered.contains(*arrow)),
+                "ASCII keybinding label should spell out arrows: {rendered:?}"
+            );
+        }
     }
 
     #[test]

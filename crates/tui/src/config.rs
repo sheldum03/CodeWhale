@@ -2519,6 +2519,12 @@ impl Config {
             return Ok(String::new());
         }
 
+        let api_key_help_bullet = if crate::palette::ascii_ui_enabled() {
+            "-"
+        } else {
+            "\u{2022}"
+        };
+
         match provider {
             ApiProvider::Deepseek | ApiProvider::DeepseekCN => anyhow::bail!(
                 "DeepSeek API key not found.\n\
@@ -2528,10 +2534,10 @@ impl Config {
                         codewhale auth set --provider deepseek\n\
                  \n\
                  Alternatives:\n\
-                   • export DEEPSEEK_API_KEY=<your-key>      (current shell only;\n\
+                   {api_key_help_bullet} export DEEPSEEK_API_KEY=<your-key>      (current shell only;\n\
                      also note: zsh users — exports in ~/.zshrc only reach interactive\n\
                      shells, prefer ~/.zshenv for everything)\n\
-                   • api_key = \"<your-key>\"  in ~/.codewhale/config.toml"
+                   {api_key_help_bullet} api_key = \"<your-key>\"  in ~/.codewhale/config.toml"
             ),
             ApiProvider::NvidiaNim => anyhow::bail!(
                 "NVIDIA NIM API key not found. Run 'codewhale auth set --provider nvidia-nim', \
@@ -5387,7 +5393,7 @@ pub fn clear_active_provider_api_key(provider: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::lock_test_env;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use std::collections::HashMap;
     use std::env;
     use std::ffi::OsString;
@@ -8375,6 +8381,33 @@ model = "glm-5"
         config.validate()?;
         let err = config.deepseek_api_key().expect_err("missing key");
         assert!(err.to_string().contains("Volcengine Ark API key not found"));
+        Ok(())
+    }
+
+    #[test]
+    fn deepseek_missing_key_help_uses_ascii_bullets_when_enabled() -> Result<()> {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-deepseek-missing-key-ascii-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root)?;
+        let _guard = EnvGuard::new(&temp_root);
+
+        let err = Config::default()
+            .deepseek_api_key()
+            .expect_err("missing key");
+        let msg = err.to_string();
+
+        assert!(msg.contains("- export DEEPSEEK_API_KEY"), "got: {msg}");
+        assert!(msg.contains("- api_key = \"<your-key>\""), "got: {msg}");
+        assert!(!msg.contains('\u{2022}'), "got: {msg}");
         Ok(())
     }
 

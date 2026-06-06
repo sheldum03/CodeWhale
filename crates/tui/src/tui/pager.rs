@@ -25,7 +25,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::palette::{self, UiTheme};
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 
 /// Footer hint shown along the bottom border of the pager. Kept short so it
@@ -44,6 +44,7 @@ pub struct PagerView {
     search_index: usize,
     search_mode: bool,
     pending_g: bool,
+    ui_theme: UiTheme,
     /// Cached visible content height from the last render. Used by paging
     /// keys (Ctrl+D/U, Ctrl+F/B, Space, etc.) to compute scroll deltas
     /// without access to the render area.
@@ -63,8 +64,14 @@ impl PagerView {
             search_index: 0,
             search_mode: false,
             pending_g: false,
+            ui_theme: palette::UI_THEME,
             last_visible_height: Cell::new(0),
         }
+    }
+
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     pub fn from_text(title: impl Into<String>, text: &str, width: u16) -> Self {
@@ -431,14 +438,14 @@ impl ModalView for PagerView {
                 }
                 let is_current = current_match_line == Some(absolute_idx);
                 let bg = if is_current {
-                    Color::Yellow
+                    self.ui_theme.selection_bg
                 } else {
-                    Color::DarkGray
+                    self.ui_theme.elevated_bg
                 };
                 let fg = if is_current {
-                    Color::Reset
+                    self.ui_theme.selection_text
                 } else {
-                    Color::Yellow
+                    self.ui_theme.status_warning
                 };
                 let highlight = Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD);
                 for span in line.spans.iter_mut() {
@@ -452,7 +459,7 @@ impl ModalView for PagerView {
             visible_lines.push(Line::from(Span::styled(
                 prompt,
                 Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(self.ui_theme.accent_secondary)
                     .add_modifier(Modifier::BOLD),
             )));
         } else if !self.search_matches.is_empty() {
@@ -463,7 +470,7 @@ impl ModalView for PagerView {
             );
             visible_lines.push(Line::from(Span::styled(
                 status,
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )));
         }
 
@@ -471,23 +478,139 @@ impl ModalView for PagerView {
             Span::styled(
                 FOOTER_HINT_EXIT,
                 Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(self.ui_theme.accent_secondary)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(FOOTER_HINT_NAV, Style::default().fg(palette::TEXT_HINT)),
+            Span::styled(FOOTER_HINT_NAV, Style::default().fg(self.ui_theme.text_hint)),
         ]);
-        let block = Block::default()
-            .title(self.title.clone())
-            .title_bottom(footer)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .padding(Padding::uniform(1));
+        if palette::ascii_ui_enabled() {
+            let inner = render_ascii_pager_chrome(popup_area, buf, &self.title, self.ui_theme);
+            Paragraph::new(visible_lines)
+                .wrap(Wrap { trim: false })
+                .render(inner, buf);
+        } else {
+            let block = Block::default()
+                .title(Line::from(Span::styled(
+                    self.title.clone(),
+                    Style::default()
+                        .fg(self.ui_theme.accent_secondary)
+                        .add_modifier(Modifier::BOLD),
+                )))
+                .title_bottom(footer)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1));
 
-        let paragraph = Paragraph::new(visible_lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(popup_area, buf);
+            let paragraph = Paragraph::new(visible_lines)
+                .block(block)
+                .style(Style::default().fg(self.ui_theme.text_body))
+                .wrap(Wrap { trim: false });
+            paragraph.render(popup_area, buf);
+        }
     }
+}
+
+fn render_ascii_pager_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_secondary)
+        .bg(theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(theme.text_hint)
+        .bg(theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let footer_text = format!("{FOOTER_HINT_EXIT}{FOOTER_HINT_NAV}");
+        let footer = ascii_prefix(&footer_text, area.width.saturating_sub(4) as usize);
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &footer,
+            footer_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
 }
 
 fn line_to_string(line: &Line<'static>) -> String {
@@ -564,6 +687,7 @@ fn push_word_breaking_chars(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use ratatui::text::Line;
 
     fn make_pager(lines: usize) -> PagerView {
@@ -591,6 +715,50 @@ mod tests {
         let area = Rect::new(0, 0, 40, height);
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
+    }
+
+    #[test]
+    fn unicode_pager_uses_injected_theme_for_panel_and_text() {
+        let _env_lock = lock_test_env();
+        let _ascii = EnvVarGuard::remove("CODEWHALE_ASCII_UI");
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.accent_secondary = Color::Indexed(45);
+        theme.surface_bg = Color::Indexed(234);
+        theme.text_body = Color::Indexed(250);
+
+        let view = PagerView::from_text("Activity Detail", "body line", 40).with_ui_theme(theme);
+        let area = Rect::new(0, 0, 80, 18);
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        let mut title_uses_theme = false;
+        let mut body_uses_theme = false;
+        let mut panel_uses_theme_bg = false;
+        for y in area.top()..area.bottom() {
+            let mut row = String::new();
+            let mut row_has_title_color = false;
+            let mut row_has_body_color = false;
+            for x in area.left()..area.right() {
+                let cell = &buf[(x, y)];
+                row.push_str(cell.symbol());
+                row_has_title_color |= cell.fg == theme.accent_secondary;
+                row_has_body_color |= cell.fg == theme.text_body;
+                panel_uses_theme_bg |= cell.bg == theme.surface_bg;
+            }
+            title_uses_theme |= row.contains("Activity Detail") && row_has_title_color;
+            body_uses_theme |= row.contains("body line") && row_has_body_color;
+        }
+
+        assert!(
+            title_uses_theme,
+            "pager title should use injected accent color"
+        );
+        assert!(body_uses_theme, "pager body should use injected text color");
+        assert!(
+            panel_uses_theme_bg,
+            "pager panel should use injected surface background"
+        );
     }
 
     #[test]
@@ -844,6 +1012,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ascii_pager_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_pager_chrome(
+            area,
+            &mut buf,
+            "Pager",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 输出分页器 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
+
     /// `/` opens the search prompt; typing chars accumulates them; Enter
     /// commits and jumps to the first match. The matches index/count line
     /// must surface in the rendered buffer afterwards.
@@ -952,15 +1159,15 @@ mod tests {
         let popup_top_y = 1 /* outer popup */ + 1 /* block top border */ + 1 /* padding top */;
         let mut found_highlight = false;
         for x in 3..11 {
-            let bg = buf[(x, popup_top_y)].style().bg;
-            if matches!(bg, Some(Color::Yellow) | Some(Color::DarkGray)) {
+            let bg = buf[(x, popup_top_y)].bg;
+            if bg == p.ui_theme.selection_bg || bg == p.ui_theme.elevated_bg {
                 found_highlight = true;
                 break;
             }
         }
         assert!(
             found_highlight,
-            "expected a Yellow/DarkGray highlight cell on the matched-line text columns"
+            "expected a theme highlight cell on the matched-line text columns"
         );
     }
 

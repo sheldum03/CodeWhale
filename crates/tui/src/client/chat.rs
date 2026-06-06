@@ -332,7 +332,7 @@ impl DeepSeekClient {
                     Ok(None) => break, // Stream ended normally
                     Err(_elapsed) => {
                         yield Err(anyhow::anyhow!(
-                            "SSE stream idle timeout after {}s — no data received",
+                            "SSE stream idle timeout after {}s - no data received",
                             idle.as_secs(),
                         ));
                         break;
@@ -372,7 +372,9 @@ impl DeepSeekClient {
                 // Guard against unbounded buffer growth (e.g., malformed stream without newlines)
                 const MAX_SSE_BUF: usize = 10 * 1024 * 1024; // 10 MB
                 if byte_buf.len() > MAX_SSE_BUF {
-                    yield Err(anyhow::anyhow!("SSE buffer exceeded {MAX_SSE_BUF} bytes — aborting stream"));
+                    yield Err(anyhow::anyhow!(
+                        "SSE buffer exceeded {MAX_SSE_BUF} bytes - aborting stream"
+                    ));
                     break;
                 }
 

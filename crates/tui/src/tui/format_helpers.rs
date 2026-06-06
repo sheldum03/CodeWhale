@@ -35,17 +35,17 @@ pub(super) fn prefix_stability_chip(app: &App) -> Option<(String, ratatui::style
     let changes = app.prefix_change_count;
 
     let color = if changes == 0 {
-        // Perfect stability: green
-        ratatui::style::Color::Green
+        // Perfect stability.
+        app.ui_theme.success
     } else if pct >= 95 {
-        // Excellent: green
-        ratatui::style::Color::Green
+        // Excellent.
+        app.ui_theme.success
     } else if pct >= 80 {
-        // Good: yellow
-        ratatui::style::Color::Yellow
+        // Good.
+        app.ui_theme.status_warning
     } else {
-        // Poor: red — cache is churning
-        ratatui::style::Color::Red
+        // Poor — cache is churning.
+        app.ui_theme.error_fg
     };
 
     let label = if changes == 0 {

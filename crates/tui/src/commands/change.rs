@@ -13,7 +13,7 @@
 use crate::localization::{Locale, MessageId, tr};
 use crate::tui::app::{App, AppAction};
 
-use super::CommandResult;
+use super::{CommandResult, command_rule};
 
 /// Maximum length of the changelog excerpt we'll show inline (characters).
 /// If the changelog section exceeds this, we truncate and show a notice.
@@ -71,18 +71,19 @@ pub fn change(app: &mut App, version: Option<&str>) -> CommandResult {
     };
 
     let section_text = inline_changelog_section(&latest_section);
+    let rule = command_rule();
 
     // If the user's locale is English, just display.
     // Otherwise, also ask the model to translate.
     if locale == Locale::En {
         CommandResult::message(format!(
-            "{header}\n─────────────────────────────\n{section_text}{prev_hint}"
+            "{header}\n{rule}\n{section_text}{prev_hint}"
         ))
     } else if app.offline_mode || app.onboarding_needs_api_key {
         let fallback = tr(locale, MessageId::CmdChangeTranslationUnavailable);
         CommandResult::message(format!(
             "{header}\n\
-─────────────────────────────\n\
+{rule}\n\
 {fallback}\n\n\
 {section_text}{prev_hint}"
         ))
@@ -90,7 +91,7 @@ pub fn change(app: &mut App, version: Option<&str>) -> CommandResult {
         let queued = tr(locale, MessageId::CmdChangeTranslationQueued);
         let display_text = format!(
             "{header}\n\
-─────────────────────────────\n\
+{rule}\n\
 {queued}\n\n\
 {section_text}{prev_hint}"
         );

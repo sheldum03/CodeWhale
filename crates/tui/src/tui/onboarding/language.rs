@@ -26,6 +26,7 @@ pub const LANGUAGE_OPTIONS: &[(char, &str, &str, &str)] = &[
 ];
 
 pub fn lines(app: &App) -> Vec<Line<'static>> {
+    let ui_theme = app.ui_theme;
     let current_owned = app.current_locale_tag();
     let current = current_owned.as_str();
 
@@ -33,42 +34,42 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
         Line::from(Span::styled(
             app.tr(MessageId::OnboardLanguageTitle).to_string(),
             Style::default()
-                .fg(palette::DEEPSEEK_SKY)
+                .fg(ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
             app.tr(MessageId::OnboardLanguageBlurb).to_string(),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )),
         Line::from(""),
     ];
 
     for (hotkey, tag, native, english) in LANGUAGE_OPTIONS {
         let is_current = current == *tag;
-        let bullet = if is_current { "●" } else { "○" };
+        let bullet = language_bullet(is_current);
         let bullet_color = if is_current {
-            palette::DEEPSEEK_BLUE
+            ui_theme.accent_primary
         } else {
-            palette::TEXT_MUTED
+            ui_theme.text_muted
         };
         let mut spans: Vec<Span<'static>> = vec![
             Span::styled(format!("  {bullet}  "), Style::default().fg(bullet_color)),
             Span::styled(
                 format!("[{hotkey}] "),
                 Style::default()
-                    .fg(palette::TEXT_PRIMARY)
+                    .fg(ui_theme.text_body)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 native.to_string(),
-                Style::default().fg(palette::TEXT_PRIMARY),
+                Style::default().fg(ui_theme.text_body),
             ),
         ];
         if !english.is_empty() {
             spans.push(Span::styled(
                 format!(" {english}"),
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(ui_theme.text_muted),
             ));
         }
         out.push(Line::from(spans));
@@ -77,8 +78,34 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     out.push(Line::from(""));
     out.push(Line::from(Span::styled(
         app.tr(MessageId::OnboardLanguageFooter).to_string(),
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(ui_theme.text_muted),
     )));
 
     out
+}
+
+fn language_bullet(selected: bool) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        if selected { "*" } else { "o" }
+    } else if selected {
+        "\u{25CF}"
+    } else {
+        "\u{25CB}"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_bullet_has_ascii_fallback() {
+        let selected = language_bullet(true);
+        let unselected = language_bullet(false);
+        if palette::ascii_ui_enabled() {
+            assert_eq!((selected, unselected), ("*", "o"));
+        } else {
+            assert_eq!((selected, unselected), ("\u{25CF}", "\u{25CB}"));
+        }
+    }
 }

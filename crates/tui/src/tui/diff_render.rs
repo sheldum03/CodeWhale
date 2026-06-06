@@ -4,7 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::deepseek_theme::active_theme;
 
 const LINE_NUMBER_WIDTH: usize = 4;
 
@@ -55,8 +55,8 @@ pub fn render_diff(diff: &str, width: u16) -> Vec<Line<'static>> {
                 new_line,
                 '+',
                 Style::default()
-                    .fg(palette::DIFF_ADDED)
-                    .bg(palette::DIFF_ADDED_BG),
+                    .fg(active_theme().diff_added_fg)
+                    .bg(active_theme().diff_added_bg),
             ));
             if let Some(line) = new_line.as_mut() {
                 *line = line.saturating_add(1);
@@ -73,8 +73,8 @@ pub fn render_diff(diff: &str, width: u16) -> Vec<Line<'static>> {
                 new_line,
                 '-',
                 Style::default()
-                    .fg(palette::STATUS_ERROR)
-                    .bg(palette::DIFF_DELETED_BG),
+                    .fg(active_theme().diff_deleted_fg)
+                    .bg(active_theme().diff_deleted_bg),
             ));
             if let Some(line) = old_line.as_mut() {
                 *line = line.saturating_add(1);
@@ -90,7 +90,7 @@ pub fn render_diff(diff: &str, width: u16) -> Vec<Line<'static>> {
                 old_line,
                 new_line,
                 ' ',
-                Style::default().fg(palette::TEXT_PRIMARY),
+                Style::default().fg(active_theme().text_body_color),
             ));
             if let Some(line) = old_line.as_mut() {
                 *line = line.saturating_add(1);
@@ -232,7 +232,7 @@ fn render_diff_summary(summaries: &[DiffFileSummary], width: u16) -> Vec<Line<'s
             if hunks == 1 { "" } else { "s" },
         ),
         Style::default()
-            .fg(palette::TEXT_PRIMARY)
+            .fg(active_theme().text_body_color)
             .add_modifier(Modifier::BOLD),
         width,
     ));
@@ -247,7 +247,7 @@ fn render_diff_summary(summaries: &[DiffFileSummary], width: u16) -> Vec<Line<'s
         );
         lines.extend(wrap_with_style(
             &row,
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(active_theme().text_muted_color),
             width,
         ));
     }
@@ -268,13 +268,13 @@ fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
 
 fn render_header_line(line: &str, width: u16) -> Vec<Line<'static>> {
     let style = Style::default()
-        .fg(palette::DEEPSEEK_SKY)
+        .fg(active_theme().assistant_accent_color)
         .add_modifier(Modifier::BOLD);
     wrap_with_style(line, style, width)
 }
 
 fn render_hunk_header(line: &str, width: u16) -> Vec<Line<'static>> {
-    let style = Style::default().fg(palette::DEEPSEEK_BLUE);
+    let style = Style::default().fg(active_theme().user_accent_color);
     wrap_with_style(line, style, width)
 }
 
@@ -295,7 +295,7 @@ fn render_diff_line(
     for (idx, chunk) in wrapped.into_iter().enumerate() {
         if idx == 0 {
             out.push(Line::from(vec![
-                Span::styled(prefix.clone(), Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled(prefix.clone(), Style::default().fg(active_theme().text_muted_color)),
                 Span::styled(chunk, style),
             ]));
         } else {
@@ -309,7 +309,7 @@ fn render_diff_line(
     if out.is_empty() {
         out.push(Line::from(vec![Span::styled(
             prefix,
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(active_theme().text_muted_color),
         )]));
     }
 
@@ -422,6 +422,7 @@ fn push_word_breaking_chars(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deepseek_theme::{Theme, with_active_theme};
 
     fn line_text(line: &Line<'static>) -> String {
         line.spans
@@ -487,6 +488,44 @@ diff --git a/src/a.rs b/src/a.rs
             text.iter().any(|line| line.contains(" - old")),
             "deleted line should carry - gutter: {text:?}"
         );
+    }
+
+    #[test]
+    fn render_diff_uses_active_theme_for_chrome_and_changed_lines() {
+        let theme = Theme::deepseek_shell();
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,1 +1,1 @@
+-old
++new
+";
+
+        let rendered = with_active_theme(theme, || render_diff(diff, 80));
+
+        let header = rendered
+            .iter()
+            .find(|line| line_text(line).starts_with("diff --git"))
+            .expect("header should render");
+        assert_eq!(header.spans[0].style.fg, Some(theme.assistant_accent_color));
+        let hunk = rendered
+            .iter()
+            .find(|line| line_text(line).starts_with("@@"))
+            .expect("hunk should render");
+        assert_eq!(hunk.spans[0].style.fg, Some(theme.user_accent_color));
+        let deleted = rendered
+            .iter()
+            .find(|line| line_text(line).contains(" - old"))
+            .expect("deleted line should render");
+        assert_eq!(deleted.spans[1].style.fg, Some(theme.diff_deleted_fg));
+        assert_eq!(deleted.spans[1].style.bg, Some(theme.diff_deleted_bg));
+        let added = rendered
+            .iter()
+            .find(|line| line_text(line).contains(" + new"))
+            .expect("added line should render");
+        assert_eq!(added.spans[1].style.fg, Some(theme.diff_added_fg));
+        assert_eq!(added.spans[1].style.bg, Some(theme.diff_added_bg));
     }
 
     #[test]

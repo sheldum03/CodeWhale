@@ -22,6 +22,14 @@ use super::spec::{
     ApprovalRequirement, ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec,
 };
 
+fn large_output_truncation_note() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "\n... [output truncated - full text in workshop variable `last_tool_result`]"
+    } else {
+        "\n\u{2026} [output truncated \u{2014} full text in workshop variable `last_tool_result`]"
+    }
+}
+
 // === Types ===
 
 /// Registry that holds all available tools.
@@ -164,7 +172,7 @@ impl ToolRegistry {
                     let preview_chars = 1_200usize;
                     let preview: String = result.content.chars().take(preview_chars).collect();
                     let ellipsis = if result.content.chars().count() > preview_chars {
-                        "\n… [output truncated — full text in workshop variable `last_tool_result`]"
+                        large_output_truncation_note()
                     } else {
                         ""
                     };
@@ -1134,12 +1142,13 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::config::ToolOverride;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use crate::tools::ToolRegistryBuilder;
     use crate::tools::spec::{
         ToolCapability, ToolContext, ToolError, ToolResult, ToolSpec, required_str,
     };
 
-    use super::ToolRegistry;
+    use super::{ToolRegistry, large_output_truncation_note};
 
     /// A simple test tool for unit testing
     struct TestTool {
@@ -1179,6 +1188,26 @@ mod tests {
             let message = required_str(&input, "message")?;
             Ok(ToolResult::success(format!("Echo: {message}")))
         }
+    }
+
+    #[test]
+    fn large_output_truncation_note_uses_ascii_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        assert_eq!(
+            large_output_truncation_note(),
+            "\n... [output truncated - full text in workshop variable `last_tool_result`]"
+        );
+    }
+
+    #[test]
+    fn large_output_truncation_note_keeps_unicode_by_default() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::remove("CODEWHALE_ASCII_UI");
+        assert_eq!(
+            large_output_truncation_note(),
+            "\n\u{2026} [output truncated \u{2014} full text in workshop variable `last_tool_result`]"
+        );
     }
 
     fn make_test_tool(name: &str) -> Arc<TestTool> {

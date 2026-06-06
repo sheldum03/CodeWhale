@@ -8,18 +8,20 @@ pub mod welcome;
 use std::path::{Path, PathBuf};
 
 use ratatui::{
+    buffer::Buffer,
     Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Padding, Paragraph, Wrap},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::palette::{self, UiTheme};
 use crate::tui::app::{App, OnboardingState};
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default().style(Style::default().bg(palette::DEEPSEEK_INK));
+    let block = Block::default().style(Style::default().bg(app.ui_theme.surface_bg));
     f.render_widget(block, area);
 
     const TOP_MARGIN: u16 = 2;
@@ -33,7 +35,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let lines = match app.onboarding {
-        OnboardingState::Welcome => welcome::lines(),
+        OnboardingState::Welcome => welcome::lines(app.ui_theme),
         OnboardingState::Language => language::lines(app),
         OnboardingState::ApiKey => api_key::lines(app),
         OnboardingState::TrustDirectory => trust_directory::lines(app),
@@ -42,31 +44,155 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     };
 
     if !lines.is_empty() {
-        let mut panel = Block::default()
-            .title(Line::from(Span::styled(
+        let inner = if palette::ascii_ui_enabled() {
+            let footer = if app.onboarding_workspace_trust_gate {
+                None
+            } else {
+                let (step, total) = onboarding_step(app);
+                Some(format!(" Step {step}/{total} "))
+            };
+            render_ascii_onboarding_panel(
+                content_area,
+                f.buffer_mut(),
                 " CodeWhale ",
-                Style::default()
-                    .fg(palette::DEEPSEEK_BLUE)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_SLATE))
-            .padding(Padding::new(2, 2, 1, 1));
-        if !app.onboarding_workspace_trust_gate {
-            let (step, total) = onboarding_step(app);
-            panel = panel.title_bottom(Line::from(Span::styled(
-                format!(" Step {step}/{total} "),
-                Style::default()
-                    .fg(palette::TEXT_MUTED)
-                    .add_modifier(Modifier::BOLD),
-            )));
-        }
-        let inner = panel.inner(content_area);
-        f.render_widget(panel, content_area);
+                footer.as_deref(),
+                app.ui_theme,
+            )
+        } else {
+            let mut panel = Block::default()
+                .title(Line::from(Span::styled(
+                    " CodeWhale ",
+                    Style::default()
+                        .fg(app.ui_theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                )))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.ui_theme.border))
+                .style(Style::default().bg(app.ui_theme.panel_bg))
+                .padding(Padding::new(2, 2, 1, 1));
+            if !app.onboarding_workspace_trust_gate {
+                let (step, total) = onboarding_step(app);
+                panel = panel.title_bottom(Line::from(Span::styled(
+                    format!(" Step {step}/{total} "),
+                    Style::default()
+                        .fg(app.ui_theme.text_muted)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+            let inner = panel.inner(content_area);
+            f.render_widget(panel, content_area);
+            inner
+        };
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         f.render_widget(paragraph, inner);
     }
+}
+
+fn render_ascii_onboarding_panel(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    footer: Option<&str>,
+    ui_theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(ui_theme.panel_bg);
+    let border_style = Style::default()
+        .fg(ui_theme.border)
+        .bg(ui_theme.panel_bg);
+    let title_style = Style::default()
+        .fg(ui_theme.accent_primary)
+        .bg(ui_theme.panel_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(ui_theme.text_muted)
+        .bg(ui_theme.panel_bg)
+        .add_modifier(Modifier::BOLD);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if let Some(footer) = footer {
+        if area.width > 8 && area.height > 1 {
+            let footer = ascii_prefix(footer, area.width.saturating_sub(4) as usize);
+            buf.set_string(
+                area.x + 2,
+                area.y + area.height.saturating_sub(1),
+                &footer,
+                footer_style,
+            );
+        }
+    }
+
+    Rect {
+        x: area.x.saturating_add(3),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(6),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
 }
 
 fn onboarding_step(app: &App) -> (usize, usize) {
@@ -104,7 +230,7 @@ pub fn tips_lines(app: &App) -> Vec<ratatui::text::Line<'static>> {
         Line::from(Span::styled(
             app.tr(MessageId::OnboardTipsTitle).to_string(),
             Style::default()
-                .fg(palette::DEEPSEEK_SKY)
+                .fg(app.ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
@@ -116,12 +242,12 @@ pub fn tips_lines(app: &App) -> Vec<ratatui::text::Line<'static>> {
             Span::styled(
                 app.tr(MessageId::OnboardTipsFooterEnter).to_string(),
                 Style::default()
-                    .fg(palette::TEXT_PRIMARY)
+                    .fg(app.ui_theme.text_body)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 app.tr(MessageId::OnboardTipsFooterAction).to_string(),
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(app.ui_theme.text_muted),
             ),
         ]),
     ]
@@ -256,6 +382,46 @@ pub fn sync_api_key_validation_status(app: &mut App, show_empty_error: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_onboarding_panel_uses_plain_border_chars_and_padding() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_onboarding_panel(
+            area,
+            &mut buf,
+            " CodeWhale ",
+            Some(" Step 1/3 "),
+            crate::palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 3, area.y + 2, 18, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 欢迎向导 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
 
     #[test]
     fn validate_rejects_empty_or_whitespace() {

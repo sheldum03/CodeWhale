@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DeepSeek Shell CLI theme.** Added the opt-in `deepseek-shell` TUI theme
+  with ANSI-256 dark surfaces, blue/purple terminal accents, theme-aware
+  header/footer/command-palette/help/session/plan/user-input/file/model/
+  provider/mode/status/feedback pickers/onboarding/history/composer/
+  pending-preview/file-tree/sidebar/approval/elevation/context-menu/pager/
+  live-transcript/config/shell-control/sub-agent/fanout/diff-preview/tool status colors,
+  `/theme deepseek-shell` support, and
+  `CODEWHALE_ASCII_UI=1` fallbacks for terminals that need plain ASCII
+  composer, composer submit hints, empty-state brand line, transcript, thinking placeholders, cycle-boundary rules/arrows, footer and MCP health chips,
+  footer balance currency, `/settings` display separators,
+  `/tokens`, `/cost`, and `/model` localized report/status rules,
+  localized width-truncation ellipsis,
+  API-key help bullets,
+  transient receipt/status-message/status-toast markers and separators,
+  PR review prompt separators/arrows/ellipsis,
+  command-palette description separators, large-paste toast separators,
+  setup/status/doctor/init/session-fork CLI markers/arrows,
+  command-palette/picker/file-picker/model-picker/provider-picker/session-picker/mode-picker/status-picker/feedback-picker/plan-prompt/user-input/context-menu/pager/help-overlay
+  borders/hints,
+  pending-preview, help, live-transcript chrome/cache render context, command text rules/headings/separators/bullets/ellipsis/missing markers,
+  config/shell-control/sub-agents modal chrome/steps marker, Markdown, terminal title animation/completion titles, sidebar separators/status markers/progress bars/context missing-value placeholders, fanout,
+  agent, fanout count separators, onboarding panel, decision-card chrome/glyphs, approval title separators, modal, status/change summaries, and tool chrome. The
+  transcript/copy-metadata/file-tree/sidebar and full-frame `active_theme()`
+  scopes now derive from the runtime `UiTheme`, inline diff highlights use active theme diff
+  tokens, review cards use the `verify` tool-card family, agent-card action
+  and summary truncation plus fanout worker grids respect render width and
+  CJK/wide characters, theme-picker previews preserve runtime
+  `background_color` overlays, theme-picker selection rows use the active
+  selection foreground/background tokens, `/theme` help and `/config` schema
+  now name `deepseek-shell` and the `system` return path, command text ASCII fallback now
+  covers status markers, rails, prompt chevrons, submit/Alt key glyphs, tool/fanout/thinking glyphs,
+  compacting escape markers, context seam status markers, sidebar progress blocks, and slash-command result
+  messages/errors, transcript system/error messages, read-file numbered output separators,
+  edit-file fuzzy-match summary separators,
+  restore snapshot-label ellipses,
+  task-list/task-detail and Tasks sidebar status markers,
+  update-plan tool status symbols, web-search API error
+  separators, client stream error separators, pandoc conversion summaries, and large-output truncation notes
+  respect ASCII UI, the implementation-facing token and fallback contract
+  now lives in `docs/CLI_VISUAL_SPEC.md`, and the release checklist now
+  includes TUI visual QA for theme switching, narrow terminals, ASCII UI, and
+  low-motion mode.
+
 ## [0.8.53] - 2026-06-03
 
 ### Added

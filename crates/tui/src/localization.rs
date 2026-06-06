@@ -986,9 +986,19 @@ pub fn truncate_to_width(text: &str, max_width: usize) -> String {
         return text.to_string();
     }
 
-    let ellipsis_width = '…'.width().unwrap_or(1);
+    let ascii = crate::palette::ascii_ui_enabled();
+    let ellipsis = if ascii {
+        match max_width {
+            1 => ".",
+            2 => "..",
+            _ => "...",
+        }
+    } else {
+        "\u{2026}"
+    };
+    let ellipsis_width = ellipsis.width();
     if max_width <= ellipsis_width {
-        return "…".to_string();
+        return ellipsis.to_string();
     }
 
     let limit = max_width - ellipsis_width;
@@ -1002,7 +1012,7 @@ pub fn truncate_to_width(text: &str, max_width: usize) -> String {
         out.push(ch);
         width += ch_width;
     }
-    out.push('…');
+    out.push_str(ellipsis);
     out
 }
 
@@ -1144,7 +1154,9 @@ fn english(id: MessageId) -> &'static str {
         MessageId::CmdModelsDescription => "List available models from API",
         MessageId::CmdNetworkDescription => "Manage network allow and deny rules",
         MessageId::CmdNoteDescription => "Add, list, edit, or remove workspace notes",
-        MessageId::CmdThemeDescription => "Switch theme or open the theme picker",
+        MessageId::CmdThemeDescription => {
+            "Switch theme or open picker: /theme deepseek-shell, /theme system"
+        }
         MessageId::CmdProviderDescription => "Switch the active provider and/or model",
         MessageId::CmdQueueDescription => "View or edit queued messages",
         MessageId::CmdQueueUsage => "Usage: /queue [list|edit <n>|drop <n>|clear]",
@@ -1616,7 +1628,9 @@ fn vietnamese(id: MessageId) -> Option<&'static str> {
         MessageId::CmdNoteDescription => {
             "Thêm, liệt kê, sửa hoặc xóa ghi chú trong không gian làm việc"
         }
-        MessageId::CmdThemeDescription => "Chuyển đổi giao diện hoặc mở bảng chọn giao diện",
+        MessageId::CmdThemeDescription => {
+            "Chuyển giao diện hoặc mở bảng chọn: /theme deepseek-shell, /theme system"
+        }
         MessageId::CmdProviderDescription => {
             "Chuyển đổi hoặc xem backend LLM đang hoạt động (deepseek | nvidia-nim | ollama)"
         }
@@ -2164,7 +2178,7 @@ fn japanese(id: MessageId) -> Option<&'static str> {
         MessageId::CmdNetworkDescription => "ネットワーク許可・拒否ルールを管理",
         MessageId::CmdNoteDescription => "ワークスペースノートの追加、一覧、編集、削除",
         MessageId::CmdThemeDescription => {
-            "テーマを切り替え（ダーク/ライト/グレースケール/システム）"
+            "テーマ切替または選択画面: /theme deepseek-shell, /theme system"
         }
         MessageId::CmdProviderDescription => {
             "現在の LLM バックエンドを切り替え・確認（deepseek | nvidia-nim | ollama）"
@@ -2607,7 +2621,9 @@ fn chinese_simplified(id: MessageId) -> Option<&'static str> {
         MessageId::CmdModelsDescription => "列出 API 中可用的模型",
         MessageId::CmdNetworkDescription => "管理网络允许和拒绝规则",
         MessageId::CmdNoteDescription => "添加、列出、编辑或删除工作区笔记",
-        MessageId::CmdThemeDescription => "切换主题：深色、浅色、灰度或系统",
+        MessageId::CmdThemeDescription => {
+            "切换主题或打开选择器：/theme deepseek-shell，/theme system"
+        }
         MessageId::CmdProviderDescription => {
             "切换或查看当前 LLM 后端（deepseek | nvidia-nim | ollama）"
         }
@@ -3029,7 +3045,9 @@ fn portuguese_brazil(id: MessageId) -> Option<&'static str> {
         MessageId::CmdModelsDescription => "Listar os modelos disponíveis pela API",
         MessageId::CmdNetworkDescription => "Gerenciar regras de rede permitidas e bloqueadas",
         MessageId::CmdNoteDescription => "Adicionar, listar, editar ou remover notas do workspace",
-        MessageId::CmdThemeDescription => "Alternar tema: escuro, claro, tons de cinza ou sistema",
+        MessageId::CmdThemeDescription => {
+            "Alternar tema ou abrir seletor: /theme deepseek-shell, /theme system"
+        }
         MessageId::CmdProviderDescription => {
             "Trocar ou exibir o backend LLM ativo (deepseek | nvidia-nim | ollama)"
         }
@@ -3519,7 +3537,9 @@ fn spanish_latin_america(id: MessageId) -> Option<&'static str> {
         MessageId::CmdNoteDescription => {
             "Agregar nota al archivo persistente (.codewhale/notes.md)"
         }
-        MessageId::CmdThemeDescription => "Alternar entre tema claro y oscuro",
+        MessageId::CmdThemeDescription => {
+            "Cambiar tema o abrir selector: /theme deepseek-shell, /theme system"
+        }
         MessageId::CmdProviderDescription => {
             "Cambiar o mostrar el backend LLM activo (deepseek | nvidia-nim | ollama)"
         }
@@ -3912,6 +3932,7 @@ fn spanish_latin_america(id: MessageId) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use ratatui::{
         buffer::Buffer,
         layout::Rect,
@@ -4013,6 +4034,18 @@ mod tests {
                 "{tag} sample overflowed: {truncated:?}"
             );
         }
+    }
+
+    #[test]
+    fn width_truncation_uses_ascii_ellipsis_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let truncated = truncate_to_width("configurations filtered", 12);
+
+        assert!(truncated.ends_with("..."), "got: {truncated}");
+        assert!(!truncated.contains('\u{2026}'), "got: {truncated}");
+        assert!(truncated.width() <= 12, "got: {truncated}");
     }
 
     #[test]

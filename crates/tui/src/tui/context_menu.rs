@@ -12,7 +12,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::palette::{self, UiTheme};
 use crate::tui::views::{ContextMenuAction, ModalKind, ModalView, ViewAction, ViewEvent};
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub struct ContextMenuView {
     row: u16,
     last_rect: Cell<Option<Rect>>,
     title: String,
+    ui_theme: UiTheme,
 }
 
 impl ContextMenuView {
@@ -40,7 +41,13 @@ impl ContextMenuView {
             row,
             last_rect: Cell::new(None),
             title,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn selected_action(&self) -> Option<ContextMenuAction> {
@@ -188,26 +195,103 @@ impl ModalView for ContextMenuView {
                 let text = trim_to_width(&format!("{label}{description}"), inner_width);
                 let style = if idx == self.selected {
                     Style::default()
-                        .fg(palette::TEXT_PRIMARY)
-                        .bg(palette::DEEPSEEK_BLUE)
+                        .fg(self.ui_theme.selection_text)
+                        .bg(self.ui_theme.selection_bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(palette::TEXT_SOFT)
-                        .bg(palette::SURFACE_ELEVATED)
+                        .fg(self.ui_theme.text_soft)
+                        .bg(self.ui_theme.elevated_bg)
                 };
                 Line::from(Span::styled(text, style))
             })
             .collect::<Vec<_>>();
 
-        let block = Block::default()
-            .title(self.title.as_str())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::DEEPSEEK_SKY))
-            .style(Style::default().bg(palette::SURFACE_ELEVATED))
-            .padding(Padding::horizontal(0));
+        let inner_area = if palette::ascii_ui_enabled() {
+            render_ascii_context_menu_chrome(menu_area, buf, self.title.as_str(), self.ui_theme)
+        } else {
+            let block = Block::default()
+                .title(self.title.as_str())
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.elevated_bg))
+                .padding(Padding::horizontal(0));
+            let inner_area = block.inner(menu_area);
+            block.render(menu_area, buf);
+            inner_area
+        };
 
-        Paragraph::new(lines).block(block).render(menu_area, buf);
+        Paragraph::new(lines).render(inner_area, buf);
+    }
+}
+
+fn render_ascii_context_menu_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.elevated_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.elevated_bg);
+    let title_style = Style::default()
+        .fg(theme.text_soft)
+        .bg(theme.elevated_bg)
+        .add_modifier(Modifier::BOLD);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = trim_to_width(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
     }
 }
 
@@ -216,7 +300,7 @@ fn trim_to_width(text: &str, max_width: usize) -> String {
         return text.to_string();
     }
     if max_width <= 3 {
-        return text.chars().take(max_width).collect();
+        return ".".repeat(max_width);
     }
 
     let limit = max_width.saturating_sub(3);
@@ -325,5 +409,98 @@ mod tests {
                 action: ContextMenuAction::OpenHelp
             })
         ));
+    }
+
+    #[test]
+    fn selected_entry_uses_injected_theme_colors() {
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        theme.selection_text = ratatui::style::Color::Indexed(255);
+        let view = ContextMenuView::new(
+            vec![
+                entry("Paste", ContextMenuAction::Paste),
+                entry("Help", ContextMenuAction::OpenHelp),
+            ],
+            2,
+            2,
+            " Right click ".to_string(),
+        )
+        .with_ui_theme(theme);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 10,
+        };
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        let selected_cell = buf
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "1")
+            .expect("selected entry should render");
+        assert_eq!(selected_cell.bg, theme.selection_bg);
+        assert_eq!(selected_cell.fg, theme.selection_text);
+    }
+
+    #[test]
+    fn ascii_context_menu_chrome_uses_plain_border_chars() {
+        let area = Rect {
+            x: 1,
+            y: 1,
+            width: 18,
+            height: 6,
+        };
+        let mut buf = Buffer::empty(Rect {
+            x: 0,
+            y: 0,
+            width: 22,
+            height: 10,
+        });
+        let inner = render_ascii_context_menu_chrome(
+            area,
+            &mut buf,
+            " Right click ",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(
+            inner,
+            Rect {
+                x: area.x + 1,
+                y: area.y + 1,
+                width: area.width - 2,
+                height: area.height - 2,
+            }
+        );
+    }
+
+    #[test]
+    fn trim_to_width_respects_cjk_display_width_for_tiny_widths() {
+        for max_width in 0..=3 {
+            let trimmed = trim_to_width("\u{4f1a}\u{8bdd}\u{5217}\u{8868}", max_width);
+
+            assert!(
+                unicode_width::UnicodeWidthStr::width(trimmed.as_str()) <= max_width,
+                "trimmed text overflowed {max_width} columns: {trimmed:?}"
+            );
+            assert!(
+                trimmed.is_char_boundary(trimmed.len()),
+                "trimmed text must not split UTF-8 codepoints: {trimmed:?}"
+            );
+        }
     }
 }

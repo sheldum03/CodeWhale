@@ -16,23 +16,114 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::session_manager::{
     SavedSession, SessionManager, SessionMetadata, extract_title, extract_user_prompt,
     strip_thinking_tags,
 };
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 
-fn modal_block(title: &str) -> Block<'static> {
+fn modal_block(title: &str, ui_theme: UiTheme) -> Block<'static> {
     Block::default()
         .title(Line::from(vec![Span::styled(
             title.to_string(),
             Style::default()
-                .fg(palette::DEEPSEEK_BLUE)
+                .fg(ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::BORDER_COLOR))
+        .border_style(Style::default().fg(ui_theme.border))
         .padding(Padding::uniform(1))
+}
+
+fn render_ascii_session_picker_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    ui_theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(ui_theme.surface_bg);
+    let border_style = Style::default()
+        .fg(ui_theme.border)
+        .bg(ui_theme.surface_bg);
+    let title_style = Style::default()
+        .fg(ui_theme.accent_primary)
+        .bg(ui_theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,6 +160,7 @@ pub struct SessionPickerView {
     /// `false`, only sessions whose recorded `workspace` matches the
     /// canonicalised `workspace_scope`.
     show_all_workspaces: bool,
+    ui_theme: UiTheme,
 }
 
 impl SessionPickerView {
@@ -100,10 +192,17 @@ impl SessionPickerView {
             status: None,
             workspace_scope: Some(canonical_or_self(workspace.to_path_buf())),
             show_all_workspaces: false,
+            ui_theme: palette::UI_THEME,
         };
         view.apply_sort_and_filter();
         view.refresh_preview();
         view
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn matches_workspace_scope(&self, session: &SessionMetadata) -> bool {
@@ -560,7 +659,12 @@ impl ModalView for SessionPickerView {
             (chunks[0], chunks[1])
         };
 
-        let list_inner = modal_block(" Sessions (1-9) ").inner(list_area);
+        let list_title = " Sessions (1-9) ";
+        let list_inner = if palette::ascii_ui_enabled() {
+            render_ascii_session_picker_chrome(list_area, buf, list_title, self.ui_theme)
+        } else {
+            modal_block(list_title, self.ui_theme).inner(list_area)
+        };
         let header_rows = 1 + usize::from(self.confirm_delete || self.status.is_some());
         let footer_rows = usize::from(!self.filtered.is_empty());
         let visible_rows = usize::from(list_inner.height)
@@ -582,25 +686,43 @@ impl ModalView for SessionPickerView {
             self.rename_mode,
             &self.rename_input,
             self.status.as_deref(),
+            self.ui_theme,
         );
-        let list = Paragraph::new(list_lines)
-            .block(modal_block(" Sessions (1-9) "))
-            .wrap(Wrap { trim: false });
-        list.render(list_area, buf);
+        if palette::ascii_ui_enabled() {
+            Paragraph::new(list_lines)
+                .wrap(Wrap { trim: false })
+                .render(list_inner, buf);
+        } else {
+            let list = Paragraph::new(list_lines)
+                .block(modal_block(list_title, self.ui_theme))
+                .wrap(Wrap { trim: false });
+            list.render(list_area, buf);
+        }
 
-        let history_inner = modal_block(" History (PgUp/PgDn) ").inner(history_area);
+        let history_title = " History (PgUp/PgDn) ";
+        let history_inner = if palette::ascii_ui_enabled() {
+            render_ascii_session_picker_chrome(history_area, buf, history_title, self.ui_theme)
+        } else {
+            modal_block(history_title, self.ui_theme).inner(history_area)
+        };
         self.update_history_viewport(history_inner.height as usize);
         let visible_preview = visible_preview_lines(
             &self.current_preview,
             self.history_scroll.get(),
             history_inner.height as usize,
         );
-        let preview_lines = format_preview(&visible_preview);
+        let preview_lines = format_preview(&visible_preview, self.ui_theme);
 
-        let preview = Paragraph::new(preview_lines)
-            .block(modal_block(" History (PgUp/PgDn) "))
-            .wrap(Wrap { trim: false });
-        preview.render(history_area, buf);
+        if palette::ascii_ui_enabled() {
+            Paragraph::new(preview_lines)
+                .wrap(Wrap { trim: false })
+                .render(history_inner, buf);
+        } else {
+            let preview = Paragraph::new(preview_lines)
+                .block(modal_block(history_title, self.ui_theme))
+                .wrap(Wrap { trim: false });
+            preview.render(history_area, buf);
+        }
     }
 }
 
@@ -618,6 +740,7 @@ fn build_list_lines(
     rename_mode: bool,
     rename_input: &str,
     status: Option<&str>,
+    ui_theme: UiTheme,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let header = if search_mode {
@@ -631,27 +754,27 @@ fn build_list_lines(
     };
     lines.push(Line::from(Span::styled(
         truncate(&header, width),
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(ui_theme.text_muted),
     )));
 
     if confirm_delete {
         lines.push(Line::from(Span::styled(
             "Confirm delete (y/n)",
             Style::default()
-                .fg(palette::STATUS_WARNING)
+                .fg(ui_theme.warning)
                 .add_modifier(Modifier::BOLD),
         )));
     } else if let Some(status) = status {
         lines.push(Line::from(Span::styled(
             truncate(status, width),
-            Style::default().fg(palette::DEEPSEEK_SKY),
+            Style::default().fg(ui_theme.accent_primary),
         )));
     }
 
     if sessions.is_empty() {
         lines.push(Line::from(Span::styled(
             "No sessions available.",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )));
         return lines;
     }
@@ -667,11 +790,11 @@ fn build_list_lines(
         line = truncate(&line, width);
         let style = if idx == selected {
             Style::default()
-                .fg(palette::SELECTION_TEXT)
-                .bg(palette::DEEPSEEK_BLUE)
+                .fg(ui_theme.selection_text)
+                .bg(ui_theme.selection_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(palette::TEXT_PRIMARY)
+            Style::default().fg(ui_theme.text_body)
         };
         lines.push(Line::from(Span::styled(line, style)));
     }
@@ -684,7 +807,7 @@ fn build_list_lines(
                 &format!("Showing {start}-{end} / {}", sessions.len()),
                 width,
             ),
-            Style::default().fg(palette::TEXT_DIM),
+            Style::default().fg(ui_theme.text_dim),
         )));
     }
 
@@ -803,12 +926,12 @@ fn message_text_for_history(message: &crate::models::Message) -> String {
     text
 }
 
-fn format_preview(lines: &[String]) -> Vec<Line<'static>> {
+fn format_preview(lines: &[String], ui_theme: UiTheme) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     for line in lines {
         out.push(Line::from(Span::styled(
             line.clone(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(ui_theme.text_body),
         )));
     }
     out
@@ -880,11 +1003,16 @@ fn truncate(text: &str, width: u16) -> String {
     if text.width() <= max {
         return text.to_string();
     }
+    if max <= 3 {
+        return ".".repeat(max);
+    }
+
     let mut out = String::new();
     let mut current = 0;
+    let limit = max.saturating_sub(3);
     for ch in text.chars() {
         let w = ch.width().unwrap_or(0);
-        if current + w >= max.saturating_sub(3) {
+        if current + w > limit {
             break;
         }
         out.push(ch);
@@ -986,6 +1114,101 @@ mod tests {
         session
     }
 
+    #[test]
+    fn ascii_session_picker_chrome_uses_plain_border_chars_and_padding() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_session_picker_chrome(
+            area,
+            &mut buf,
+            " Sessions ",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 会话列表 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix must not split UTF-8 codepoints: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn truncate_respects_cjk_display_width_for_tiny_widths() {
+        for width in 1..=3 {
+            let truncated = truncate("\u{4f1a}\u{8bdd}\u{5217}\u{8868}", width);
+
+            assert!(
+                UnicodeWidthStr::width(truncated.as_str()) <= width as usize,
+                "truncated text overflowed {width} columns: {truncated:?}"
+            );
+            assert!(
+                truncated.is_char_boundary(truncated.len()),
+                "truncated text must not split UTF-8 codepoints: {truncated:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_allows_exact_display_width_before_ellipsis() {
+        let truncated = truncate("\u{4f1a}\u{8bdd}\u{5217}\u{8868}", 7);
+
+        assert_eq!(truncated, "\u{4f1a}\u{8bdd}...");
+        assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 7);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn test_build_list_lines(
+        sessions: &[SessionMetadata],
+        selected: usize,
+        width: u16,
+        scroll: usize,
+        visible_rows: usize,
+        search_mode: bool,
+        search_input: &str,
+        sort_label: &str,
+        confirm_delete: bool,
+        rename_mode: bool,
+        rename_input: &str,
+        status: Option<&str>,
+    ) -> Vec<Line<'static>> {
+        build_list_lines(
+            sessions,
+            selected,
+            width,
+            scroll,
+            visible_rows,
+            search_mode,
+            search_input,
+            sort_label,
+            confirm_delete,
+            rename_mode,
+            rename_input,
+            status,
+            palette::UI_THEME,
+        )
+    }
+
     fn picker_with(sessions: Vec<SessionMetadata>, scope: Option<&str>) -> SessionPickerView {
         let workspace_scope = scope.map(PathBuf::from);
         let mut view = SessionPickerView {
@@ -1008,6 +1231,7 @@ mod tests {
             status: None,
             workspace_scope,
             show_all_workspaces: false,
+            ui_theme: palette::UI_THEME,
         };
         view.apply_sort_and_filter();
         view
@@ -1072,7 +1296,7 @@ mod tests {
             "A very long title that should be truncated by the list pane width",
         )];
         let width = 24;
-        let lines = build_list_lines(
+        let lines = test_build_list_lines(
             &sessions, 0, width, 0, 5, false, "", "recent", false, false, "", None,
         );
 
@@ -1091,7 +1315,7 @@ mod tests {
             test_session(1, "first session"),
             test_session(2, "second session"),
         ];
-        let lines = build_list_lines(
+        let lines = test_build_list_lines(
             &sessions, 1, 80, 0, 5, false, "", "recent", false, false, "", None,
         );
 
@@ -1108,8 +1332,8 @@ mod tests {
             .first()
             .expect("selected row should have a span");
 
-        assert_eq!(span.style.fg, Some(palette::SELECTION_TEXT));
-        assert_eq!(span.style.bg, Some(palette::DEEPSEEK_BLUE));
+        assert_eq!(span.style.fg, Some(palette::UI_THEME.selection_text));
+        assert_eq!(span.style.bg, Some(palette::UI_THEME.selection_bg));
         assert!(span.style.add_modifier.contains(Modifier::BOLD));
     }
 
@@ -1119,7 +1343,7 @@ mod tests {
         session.updated_at = DateTime::parse_from_rfc3339("2026-06-01T12:34:00Z")
             .expect("timestamp")
             .with_timezone(&Utc);
-        let lines = build_list_lines(
+        let lines = test_build_list_lines(
             &[session],
             0,
             120,
@@ -1151,7 +1375,7 @@ mod tests {
         let mut forked = test_session(1, "forked path");
         forked.parent_session_id = Some("parent-session-abcdef".to_string());
         forked.forked_from_message_count = Some(3);
-        let lines = build_list_lines(
+        let lines = test_build_list_lines(
             &[forked],
             0,
             120,
@@ -1181,7 +1405,7 @@ mod tests {
             test_session(1, "first session"),
             test_session(2, "second session"),
         ];
-        let lines = build_list_lines(
+        let lines = test_build_list_lines(
             &sessions, 0, 80, 0, 5, false, "", "recent", false, false, "", None,
         );
 
@@ -1332,6 +1556,7 @@ mod tests {
             status: None,
             workspace_scope: None,
             show_all_workspaces: true,
+            ui_theme: palette::UI_THEME,
         };
 
         view.selected = 6;

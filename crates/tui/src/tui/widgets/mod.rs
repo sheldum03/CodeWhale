@@ -16,10 +16,13 @@ mod renderable;
 pub mod tool_card;
 
 pub use footer::{
-    FooterProps, FooterToast, FooterWidget, footer_agents_chip, footer_shell_chip,
-    footer_working_label,
+    FooterProps, FooterToast, FooterWidget, footer_agents_chip, footer_agents_chip_with_color,
+    footer_shell_chip, footer_shell_chip_with_color, footer_working_label,
 };
-pub use header::{HeaderData, HeaderWidget, header_status_indicator_frame};
+pub(crate) use footer::footer_separator;
+pub use header::{
+    HeaderData, HeaderWidget, header_status_indicator_frame, header_status_indicator_frame_for_theme,
+};
 pub use renderable::Renderable;
 
 use std::time::Duration;
@@ -39,6 +42,7 @@ use crate::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    symbols::border,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -53,6 +57,82 @@ const SEND_FLASH_DURATION: Duration = Duration::from_millis(500);
 const COMPOSER_PANEL_HEIGHT: u16 = 2;
 const JUMP_TO_LATEST_BUTTON_WIDTH: u16 = 3;
 const JUMP_TO_LATEST_BUTTON_HEIGHT: u16 = 3;
+const DEEPSEEK_SHELL_COMPOSER_PROMPT: &str = "\u{276F} ";
+const ASCII_COMPOSER_PROMPT: &str = "> ";
+const ASCII_BORDER_SET: border::Set = border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
+fn widget_block_border<'a>(block: Block<'a>) -> Block<'a> {
+    if palette::ascii_ui_enabled() {
+        block.border_set(ASCII_BORDER_SET)
+    } else {
+        block
+    }
+}
+
+fn widget_ellipsis() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn widget_warning_prefix() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "!!"
+    } else {
+        "\u{26A0}"
+    }
+}
+
+fn widget_title_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{2014}"
+    }
+}
+
+fn widget_skill_marker() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "+"
+    } else {
+        "\u{2726}"
+    }
+}
+
+fn widget_scrollbar_track() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "|"
+    } else {
+        "\u{2502}"
+    }
+}
+
+fn widget_scrollbar_thumb() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "|"
+    } else {
+        "\u{2503}"
+    }
+}
+
+fn widget_left_rail_char() -> char {
+    if palette::ascii_ui_enabled() {
+        '|'
+    } else {
+        '\u{2503}'
+    }
+}
 
 pub struct ChatWidget {
     content_area: Rect,
@@ -277,7 +357,13 @@ impl ChatWidget {
             && let Some(send_at) = app.last_send_at
         {
             if send_at.elapsed() < SEND_FLASH_DURATION {
-                apply_send_flash(&mut lines, top, &app.history, line_meta);
+                apply_send_flash(
+                    &mut lines,
+                    top,
+                    &app.history,
+                    line_meta,
+                    app.ui_theme.elevated_bg,
+                );
             } else {
                 app.last_send_at = None;
             }
@@ -363,9 +449,9 @@ impl Renderable for ChatWidget {
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
-                .track_symbol(Some("│"))
+                .track_symbol(Some(widget_scrollbar_track()))
                 .track_style(Style::default().fg(self.scroll_track))
-                .thumb_symbol("┃")
+                .thumb_symbol(widget_scrollbar_thumb())
                 .thumb_style(Style::default().fg(self.scroll_thumb))
                 .render(area, buf, &mut state);
         }
@@ -416,18 +502,59 @@ fn render_jump_to_latest_button(
     border: Color,
     arrow: Color,
 ) {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border))
-        .style(Style::default().bg(background))
-        .render(area, buf);
+    if palette::ascii_ui_enabled() {
+        let border_style = Style::default().fg(border).bg(background);
+        let fill_style = Style::default().bg(background);
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                buf[(x, y)].set_symbol(" ").set_style(fill_style);
+            }
+        }
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, area.y + area.height.saturating_sub(1))]
+                .set_symbol("-")
+                .set_style(border_style);
+        }
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(area.x + area.width.saturating_sub(1), y)]
+                .set_symbol("|")
+                .set_style(border_style);
+        }
+        for (x, y) in [
+            (area.x, area.y),
+            (area.x + area.width.saturating_sub(1), area.y),
+            (area.x, area.y + area.height.saturating_sub(1)),
+            (
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1),
+            ),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    } else {
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border))
+            .style(Style::default().bg(background))
+            .render(area, buf);
+    }
 
     let arrow_x = area.x.saturating_add(1);
     let arrow_y = area.y.saturating_add(1);
     buf[(arrow_x, arrow_y)]
-        .set_symbol("↓")
+        .set_symbol(jump_to_latest_symbol())
         .set_style(Style::default().fg(arrow).add_modifier(Modifier::BOLD));
+}
+
+fn jump_to_latest_symbol() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "v"
+    } else {
+        "\u{2193}"
+    }
 }
 
 pub struct ComposerWidget<'a> {
@@ -506,14 +633,18 @@ impl<'a> ComposerWidget<'a> {
 
     fn mode_color(&self) -> Color {
         match self.app.mode {
-            AppMode::Agent => palette::MODE_AGENT,
-            AppMode::Yolo => palette::MODE_YOLO,
-            AppMode::Plan => palette::MODE_PLAN,
+            AppMode::Agent => self.app.ui_theme.mode_agent,
+            AppMode::Yolo => self.app.ui_theme.mode_yolo,
+            AppMode::Plan => self.app.ui_theme.mode_plan,
         }
     }
 
     fn max_height_cap(&self) -> u16 {
         composer_max_height(self.app.composer_density)
+    }
+
+    fn prompt(&self) -> &'static str {
+        composer_prompt_for_theme(self.app.theme_id)
     }
 }
 
@@ -538,16 +669,19 @@ impl Renderable for ComposerWidget<'_> {
         let menu_lines_for_budget = self.active_menu_reserved_rows().max(menu_lines);
         let input_rows_budget =
             composer_input_rows_budget(inner_area.height, menu_lines_for_budget);
-        let content_width = usize::from(inner_area.width.max(1));
+        let prompt = self.prompt();
+        let content_width =
+            composer_input_content_width(inner_area.width, self.app.theme_id).max(1);
         let (visible_lines, _cursor_row, _cursor_col, scroll_offset) =
             layout_input_with_scroll(input_text, input_cursor, content_width, input_rows_budget);
         let is_draft_mode = input_text.contains('\n') || visible_lines.len() > 1;
         if has_panel {
             let border_color = if input_text.trim().is_empty() {
-                palette::BORDER_COLOR
+                self.app.ui_theme.border
             } else {
                 self.mode_color()
             };
+            let hint_style = Style::default().fg(self.app.ui_theme.text_muted);
             let hint_line = if self.app.is_history_search_active() {
                 Some(Line::from(vec![
                     Span::styled(
@@ -555,7 +689,7 @@ impl Renderable for ComposerWidget<'_> {
                             " {}  ",
                             self.app.tr(crate::localization::MessageId::HistoryHintMove)
                         ),
-                        Style::default().fg(palette::TEXT_MUTED),
+                        hint_style,
                     ),
                     Span::styled(
                         format!(
@@ -563,19 +697,19 @@ impl Renderable for ComposerWidget<'_> {
                             self.app
                                 .tr(crate::localization::MessageId::HistoryHintAccept)
                         ),
-                        Style::default().fg(palette::TEXT_MUTED),
+                        hint_style,
                     ),
                     Span::styled(
                         self.app
                             .tr(crate::localization::MessageId::HistoryHintRestore),
-                        Style::default().fg(palette::TEXT_MUTED),
+                        hint_style,
                     ),
                 ]))
             } else if !self.slash_menu_entries.is_empty() {
                 Some(Line::from(vec![
-                    Span::styled(" Up/Down move  ", Style::default().fg(palette::TEXT_MUTED)),
-                    Span::styled("Tab accept  ", Style::default().fg(palette::TEXT_MUTED)),
-                    Span::styled("Esc close", Style::default().fg(palette::TEXT_MUTED)),
+                    Span::styled(" Up/Down move  ", hint_style),
+                    Span::styled("Tab accept  ", hint_style),
+                    Span::styled("Esc close", hint_style),
                 ]))
             } else if !input_text.trim().is_empty() {
                 // Live disambiguation for #345: when there's content in the
@@ -585,37 +719,44 @@ impl Renderable for ComposerWidget<'_> {
                 // is the only reliable cue before pressing Enter.
                 use crate::tui::app::SubmitDisposition;
                 let queue_count = self.app.queued_message_count();
+                let submit_prefix = composer_submit_prefix();
                 let (label, color) = match self.app.decide_submit_disposition() {
                     SubmitDisposition::Immediate => {
                         if queue_count > 0 {
                             (
-                                Some(format!("↵ send ({queue_count} queued)")),
-                                palette::DEEPSEEK_SKY,
+                                Some(format!("{submit_prefix} send ({queue_count} queued)")),
+                                self.app.ui_theme.status_working,
                             )
                         } else {
-                            (None, palette::TEXT_MUTED)
+                            (None, self.app.ui_theme.text_muted)
                         }
                     }
                     SubmitDisposition::Queue => {
                         if self.app.offline_mode {
-                            (Some("↵ offline queue".to_string()), palette::STATUS_WARNING)
+                            (
+                                Some(format!("{submit_prefix} offline queue")),
+                                self.app.ui_theme.status_warning,
+                            )
                         } else {
                             let label = if queue_count > 0 {
-                                format!("↵ queue ({} waiting)", queue_count.saturating_add(1))
+                                format!(
+                                    "{submit_prefix} queue ({} waiting)",
+                                    queue_count.saturating_add(1)
+                                )
                             } else {
-                                "↵ queue for next turn".to_string()
+                                format!("{submit_prefix} queue for next turn")
                             };
-                            (Some(label), palette::TEXT_MUTED)
+                            (Some(label), self.app.ui_theme.text_muted)
                         }
                     }
                     // Steer and QueueFollowUp are now only reached via Ctrl+Enter override.
                     SubmitDisposition::Steer => (
-                        Some("↵ steering (Ctrl+Enter)".to_string()),
-                        palette::DEEPSEEK_SKY,
+                        Some(format!("{submit_prefix} steering (Ctrl+Enter)")),
+                        self.app.ui_theme.status_working,
                     ),
                     SubmitDisposition::QueueFollowUp => (
-                        Some("↵ queued (Ctrl+Enter to steer)".to_string()),
-                        palette::TEXT_MUTED,
+                        Some(format!("{submit_prefix} queued (Ctrl+Enter to steer)")),
+                        self.app.ui_theme.text_muted,
                     ),
                 };
                 label.map(|text| {
@@ -628,21 +769,23 @@ impl Renderable for ComposerWidget<'_> {
                 None
             };
 
-            let mut block = Block::default()
-                .title(Line::from(Span::styled(
-                    if self.app.is_history_search_active() {
-                        self.app
-                            .tr(crate::localization::MessageId::HistorySearchTitle)
-                    } else if is_draft_mode {
-                        "Draft"
-                    } else {
-                        "Composer"
-                    },
-                    Style::default().fg(palette::TEXT_MUTED),
-                )))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(border_color))
-                .style(background);
+            let mut block = widget_block_border(
+                Block::default()
+                    .title(Line::from(Span::styled(
+                        if self.app.is_history_search_active() {
+                            self.app
+                                .tr(crate::localization::MessageId::HistorySearchTitle)
+                        } else if is_draft_mode {
+                            "Draft"
+                        } else {
+                            "Composer"
+                        },
+                        Style::default().fg(self.app.ui_theme.text_muted),
+                    )))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color))
+                    .style(background),
+            );
             // Top-right corner: editor state plus transient turn receipts.
             // Receipts are lifecycle chrome, not transcript content; they
             // should appear briefly without displacing conversation rows.
@@ -666,10 +809,14 @@ impl Renderable for ComposerWidget<'_> {
                 self.app
                     .tr(crate::localization::MessageId::ComposerPlaceholder)
             };
-            input_lines.push(Line::from(Span::styled(
-                placeholder,
-                Style::default().fg(palette::TEXT_MUTED).italic(),
-            )));
+            input_lines.push(line_with_composer_prompt(
+                prompt,
+                self.app.ui_theme.accent_primary,
+                Span::styled(
+                    placeholder,
+                    Style::default().fg(self.app.ui_theme.text_muted).italic(),
+                ),
+            ));
         } else if let Some((sel_start, sel_end)) = self.app.selection_range() {
             let line_ranges: Vec<(usize, usize)> =
                 wrap_input_lines_for_mouse(&self.app.input, content_width)
@@ -686,16 +833,23 @@ impl Renderable for ComposerWidget<'_> {
                     *line_end,
                     sel_start,
                     sel_end,
+                    self.app.ui_theme.text_body,
                     self.app.ui_theme.selection_bg,
+                    self.app.ui_theme.selection_text,
                 );
-                input_lines.push(Line::from(spans));
+                input_lines.push(line_spans_with_composer_prompt(
+                    prompt,
+                    self.app.ui_theme.accent_primary,
+                    spans,
+                ));
             }
         } else {
             for line in &visible_lines {
-                input_lines.push(Line::from(Span::styled(
-                    line.clone(),
-                    Style::default().fg(palette::TEXT_PRIMARY),
-                )));
+                input_lines.push(line_with_composer_prompt(
+                    prompt,
+                    self.app.ui_theme.accent_primary,
+                    Span::styled(line.clone(), Style::default().fg(self.app.ui_theme.text_body)),
+                ));
             }
         }
 
@@ -727,7 +881,7 @@ impl Renderable for ComposerWidget<'_> {
                 lines.push(Line::from(Span::styled(
                     self.app
                         .tr(crate::localization::MessageId::HistoryNoMatches),
-                    Style::default().fg(palette::TEXT_MUTED),
+                    Style::default().fg(self.app.ui_theme.text_muted),
                 )));
             } else {
                 let selected = self
@@ -764,12 +918,12 @@ impl Renderable for ComposerWidget<'_> {
                     let is_selected = idx == selected;
                     let style = if is_selected {
                         Style::default()
-                            .fg(palette::SELECTION_TEXT)
-                            .bg(palette::SELECTION_BG)
+                            .fg(self.app.ui_theme.selection_text)
+                            .bg(self.app.ui_theme.selection_bg)
                     } else {
-                        Style::default().fg(palette::TEXT_MUTED)
+                        Style::default().fg(self.app.ui_theme.text_muted)
                     };
-                    let marker = if is_selected { "▸" } else { " " };
+                    let marker = composer_menu_marker(is_selected);
                     lines.push(Line::from(vec![
                         Span::styled(" ", Style::default()),
                         Span::styled(marker, style),
@@ -814,12 +968,12 @@ impl Renderable for ComposerWidget<'_> {
                 let is_selected = idx == selected;
                 let style = if is_selected {
                     Style::default()
-                        .fg(palette::SELECTION_TEXT)
-                        .bg(palette::SELECTION_BG)
+                        .fg(self.app.ui_theme.selection_text)
+                        .bg(self.app.ui_theme.selection_bg)
                 } else {
-                    Style::default().fg(palette::TEXT_MUTED)
+                    Style::default().fg(self.app.ui_theme.text_muted)
                 };
-                let marker = if is_selected { "▸" } else { " " };
+                let marker = composer_menu_marker(is_selected);
                 lines.push(Line::from(vec![
                     Span::styled(" ", Style::default()),
                     Span::styled(marker, style),
@@ -881,16 +1035,16 @@ impl Renderable for ComposerWidget<'_> {
                 let is_selected = idx == selected;
                 let sel_style = if is_selected {
                     Style::default()
-                        .fg(palette::SELECTION_TEXT)
-                        .bg(palette::SELECTION_BG)
+                        .fg(self.app.ui_theme.selection_text)
+                        .bg(self.app.ui_theme.selection_bg)
                 } else {
-                    Style::default().fg(palette::TEXT_MUTED)
+                    Style::default().fg(self.app.ui_theme.text_muted)
                 };
-                let marker = if is_selected { "▸" } else { " " };
+                let marker = composer_menu_marker(is_selected);
 
                 // Name column
                 let name_style = if entry.is_skill && !is_selected {
-                    Style::default().fg(palette::DEEPSEEK_SKY)
+                    Style::default().fg(self.app.ui_theme.status_working)
                 } else {
                     sel_style
                 };
@@ -898,10 +1052,10 @@ impl Renderable for ComposerWidget<'_> {
                 // Description column (muted when not selected, secondary when selected)
                 let desc_style = if is_selected {
                     Style::default()
-                        .fg(palette::SELECTION_TEXT)
-                        .bg(palette::SELECTION_BG)
+                        .fg(self.app.ui_theme.selection_text)
+                        .bg(self.app.ui_theme.selection_bg)
                 } else {
-                    Style::default().fg(palette::TEXT_DIM)
+                    Style::default().fg(self.app.ui_theme.text_dim)
                 };
 
                 // Build display name: canonical name, with "or /alias" hint
@@ -917,15 +1071,17 @@ impl Renderable for ComposerWidget<'_> {
                     if display_width > label_width {
                         let mut s = String::new();
                         let mut w = 0;
+                        let ellipsis = widget_ellipsis();
+                        let ellipsis_width = ellipsis.width();
                         for ch in display_name.chars() {
                             let cw = ch.width().unwrap_or(0);
-                            if w + cw + 1 > label_width {
+                            if w + cw + ellipsis_width > label_width {
                                 break;
                             }
                             s.push(ch);
                             w += cw;
                         }
-                        s.push('…');
+                        s.push_str(ellipsis);
                         // pad to label_width display cols
                         while s.width() < label_width {
                             s.push(' ');
@@ -942,7 +1098,11 @@ impl Renderable for ComposerWidget<'_> {
                 };
 
                 // Skill marker prefix
-                let skill_prefix = if entry.is_skill { "✦" } else { " " };
+                let skill_prefix = if entry.is_skill {
+                    widget_skill_marker()
+                } else {
+                    " "
+                };
 
                 // Compute exact prefix display width to avoid Paragraph wrap:
                 // 1(" ") + 1(marker) + skill_prefix.width() + label_width + 2("  ")
@@ -953,15 +1113,17 @@ impl Renderable for ComposerWidget<'_> {
                     if display_width > desc_capacity && desc_capacity > 0 {
                         let mut s = String::new();
                         let mut w = 0;
+                        let ellipsis = widget_ellipsis();
+                        let ellipsis_width = ellipsis.width();
                         for ch in entry.description.chars() {
                             let cw = ch.width().unwrap_or(0);
-                            if w + cw + 1 > desc_capacity {
+                            if w + cw + ellipsis_width > desc_capacity {
                                 break;
                             }
                             s.push(ch);
                             w += cw;
                         }
-                        s.push('…');
+                        s.push_str(ellipsis);
                         s
                     } else {
                         entry.description.clone()
@@ -993,6 +1155,7 @@ impl Renderable for ComposerWidget<'_> {
             self.active_menu_reserved_rows(),
             self.app.composer_density,
             self.app.composer_border,
+            composer_prompt_for_theme(self.app.theme_id).width(),
         )
     }
 
@@ -1000,7 +1163,9 @@ impl Renderable for ComposerWidget<'_> {
         let inner_area = self.inner_area(area);
         let input_text = self.app.composer_display_input();
         let input_cursor = self.app.composer_display_cursor();
-        let content_width = usize::from(inner_area.width.max(1));
+        let prompt_width = composer_prompt_for_theme(self.app.theme_id).width();
+        let content_width =
+            composer_input_content_width(inner_area.width, self.app.theme_id).max(1);
         // Match the render path's locked-budget calculation so the cursor
         // lands on the same row the input is drawn on.
         let input_rows_budget =
@@ -1025,6 +1190,7 @@ impl Renderable for ComposerWidget<'_> {
         let cursor_x = area
             .x
             .saturating_add(inner_area.x.saturating_sub(area.x))
+            .saturating_add(u16::try_from(prompt_width).unwrap_or(u16::MAX))
             .saturating_add(u16::try_from(cursor_col).unwrap_or(u16::MAX));
         let cursor_y = area
             .y
@@ -1047,11 +1213,20 @@ impl Renderable for ComposerWidget<'_> {
 pub struct ApprovalWidget<'a> {
     request: &'a ApprovalRequest,
     view: &'a ApprovalView,
+    ui_theme: palette::UiTheme,
 }
 
 impl<'a> ApprovalWidget<'a> {
-    pub fn new(request: &'a ApprovalRequest, view: &'a ApprovalView) -> Self {
-        Self { request, view }
+    pub fn new(
+        request: &'a ApprovalRequest,
+        view: &'a ApprovalView,
+        ui_theme: palette::UiTheme,
+    ) -> Self {
+        Self {
+            request,
+            view,
+            ui_theme,
+        }
     }
 }
 
@@ -1086,16 +1261,17 @@ impl Renderable for ApprovalWidget<'_> {
             Clear.render(bar_area, buf);
 
             let risk = self.request.risk;
-            let palette_colors = approval_palette(risk);
+            let palette_colors = approval_palette(risk, &self.ui_theme);
             let summary = format!(
-                " {} — {}  [Tab to expand] ",
+                " {} {} {}  [Tab to expand] ",
                 self.request.tool_name,
+                widget_title_separator(),
                 risk_badge_text(risk, self.view.locale()),
             );
             let line = Line::from(Span::styled(
                 summary,
                 Style::default()
-                    .fg(palette::DEEPSEEK_INK)
+                    .fg(self.ui_theme.surface_bg)
                     .bg(palette_colors.accent)
                     .add_modifier(Modifier::BOLD),
             ));
@@ -1108,7 +1284,7 @@ impl Renderable for ApprovalWidget<'_> {
 
         let risk = self.request.risk;
         let locale = self.view.locale();
-        let palette_colors = approval_palette(risk);
+        let palette_colors = approval_palette(risk, &self.ui_theme);
         let mut lines: Vec<Line<'static>> = Vec::with_capacity(20);
 
         // Header: stakes badge + tool identifier. The badge is the
@@ -1119,7 +1295,7 @@ impl Renderable for ApprovalWidget<'_> {
             Span::styled(
                 format!(" {} ", risk_badge_text(risk, locale)),
                 Style::default()
-                    .fg(palette::DEEPSEEK_INK)
+                    .fg(self.ui_theme.surface_bg)
                     .bg(palette_colors.accent)
                     .add_modifier(Modifier::BOLD),
             ),
@@ -1127,17 +1303,17 @@ impl Renderable for ApprovalWidget<'_> {
             Span::styled(
                 self.request.tool_name.clone(),
                 Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(self.ui_theme.status_working)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
 
         // Category line — English remains the baseline while localized
         // sessions get the same risk category in their UI language.
-        let (cat_label, cat_color) = category_label_for(self.request.category, locale);
+        let (cat_label, cat_color) = category_label_for(self.request.category, locale, &self.ui_theme);
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(label_type(locale), Style::default().fg(palette::TEXT_HINT)),
+            Span::styled(label_type(locale), Style::default().fg(self.ui_theme.text_hint)),
             Span::styled(
                 cat_label,
                 Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
@@ -1149,10 +1325,10 @@ impl Renderable for ApprovalWidget<'_> {
         // they tell the user what will happen.
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(label_about(locale), Style::default().fg(palette::TEXT_HINT)),
+            Span::styled(label_about(locale), Style::default().fg(self.ui_theme.text_hint)),
             Span::styled(
                 self.request.description_for_locale(locale),
-                Style::default().fg(palette::TEXT_BODY),
+                Style::default().fg(self.ui_theme.text_body),
             ),
         ]));
         for impact in self.request.impacts_for_locale(locale).into_iter().take(4) {
@@ -1160,9 +1336,9 @@ impl Renderable for ApprovalWidget<'_> {
                 Span::raw("  "),
                 Span::styled(
                     label_impact(locale),
-                    Style::default().fg(palette::TEXT_HINT),
+                    Style::default().fg(self.ui_theme.text_hint),
                 ),
-                Span::styled(impact, Style::default().fg(palette::TEXT_BODY)),
+                Span::styled(impact, Style::default().fg(self.ui_theme.text_body)),
             ]));
         }
 
@@ -1184,22 +1360,24 @@ impl Renderable for ApprovalWidget<'_> {
                         Span::styled(
                             prefix,
                             if i == 0 {
-                                Style::default().fg(palette::TEXT_HINT)
+                                Style::default().fg(self.ui_theme.text_hint)
                             } else {
                                 Style::default()
                             },
                         ),
-                        Span::styled(truncated, Style::default().fg(palette::TEXT_SECONDARY)),
+                        Span::styled(truncated, Style::default().fg(self.ui_theme.text_muted)),
                     ]));
                 }
                 if summary_lines.len() > 3 {
                     let more = match locale {
-                        Locale::ZhHans => format!("  … (还有 {} 行)", summary_lines.len() - 3),
-                        _ => format!("  … (+{} lines)", summary_lines.len() - 3),
+                        Locale::ZhHans => {
+                            format!("  {} (还有 {} 行)", widget_ellipsis(), summary_lines.len() - 3)
+                        }
+                        _ => format!("  {} (+{} lines)", widget_ellipsis(), summary_lines.len() - 3),
                     };
                     lines.push(Line::from(vec![
                         Span::raw("  "),
-                        Span::styled(more, Style::default().fg(palette::TEXT_HINT)),
+                        Span::styled(more, Style::default().fg(self.ui_theme.text_hint)),
                     ]));
                 }
             }
@@ -1214,11 +1392,11 @@ impl Renderable for ApprovalWidget<'_> {
             Span::raw("  "),
             Span::styled(
                 label_params(locale),
-                Style::default().fg(palette::TEXT_HINT),
+                Style::default().fg(self.ui_theme.text_hint),
             ),
             Span::styled(
                 params_truncated,
-                Style::default().fg(palette::TEXT_SECONDARY),
+                Style::default().fg(self.ui_theme.text_muted),
             ),
         ]));
 
@@ -1231,11 +1409,12 @@ impl Renderable for ApprovalWidget<'_> {
             let label_color = if opt.dangerous {
                 palette_colors.accent
             } else {
-                palette::TEXT_BODY
+                self.ui_theme.text_body
             };
 
-            let option_style = approval_option_style(is_selected, label_color);
-            let shortcut_style = approval_option_style(is_selected, palette_colors.shortcut);
+            let option_style = approval_option_style(is_selected, label_color, &self.ui_theme);
+            let shortcut_style =
+                approval_option_style(is_selected, palette_colors.shortcut, &self.ui_theme);
 
             let spans = vec![
                 Span::raw("  "),
@@ -1255,7 +1434,7 @@ impl Renderable for ApprovalWidget<'_> {
             Span::raw("  "),
             Span::styled(
                 selection_hint_prefix(locale),
-                Style::default().fg(palette::TEXT_HINT),
+                Style::default().fg(self.ui_theme.text_hint),
             ),
             Span::styled(
                 selection_hint_value(locale),
@@ -1265,22 +1444,25 @@ impl Renderable for ApprovalWidget<'_> {
             ),
             Span::styled(
                 footer_controls(locale),
-                Style::default().fg(palette::TEXT_HINT),
+                Style::default().fg(self.ui_theme.text_hint),
             ),
         ]));
 
         let title = format!(
-            " {} {} — {} ",
+            " {} {} {} {} ",
             risk_badge_text(risk, locale),
             approval_word(locale),
+            widget_title_separator(),
             self.request.tool_name
         );
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette_colors.border))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
-            .padding(Padding::uniform(1));
+        let block = widget_block_border(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(palette_colors.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1)),
+        );
 
         // Render the card body inside the block, then paint the warm
         // accent rail on the destructive variant. The rail uses a
@@ -1291,7 +1473,12 @@ impl Renderable for ApprovalWidget<'_> {
         paragraph.render(card_area, buf);
 
         if matches!(risk, RiskLevel::Destructive) {
-            paint_left_rail(card_area, buf, palette_colors.accent);
+            paint_left_rail(
+                card_area,
+                buf,
+                palette_colors.accent,
+                self.ui_theme.surface_bg,
+            );
         }
     }
 
@@ -1326,7 +1513,7 @@ fn compute_takeover_area(area: Rect) -> Rect {
 
 /// Paint a single-column accent on the inside-left of the card. Only
 /// touches cells that already exist in the buffer area.
-fn paint_left_rail(card: Rect, buf: &mut Buffer, color: Color) {
+fn paint_left_rail(card: Rect, buf: &mut Buffer, color: Color, background: Color) {
     if card.width < 2 || card.height < 4 {
         return;
     }
@@ -1338,8 +1525,8 @@ fn paint_left_rail(card: Rect, buf: &mut Buffer, color: Color) {
             break;
         }
         let cell = &mut buf[(rail_x, y)];
-        cell.set_char('\u{2503}'); // ┃ — heavy bar so the warning reads at a glance
-        cell.set_style(Style::default().fg(color).bg(palette::DEEPSEEK_INK));
+        cell.set_char(widget_left_rail_char());
+        cell.set_style(Style::default().fg(color).bg(background));
     }
 }
 
@@ -1350,31 +1537,31 @@ struct ApprovalColors {
     shortcut: Color,
 }
 
-fn approval_palette(risk: RiskLevel) -> ApprovalColors {
+fn approval_palette(risk: RiskLevel, theme: &palette::UiTheme) -> ApprovalColors {
     match risk {
         RiskLevel::Benign => ApprovalColors {
-            border: palette::BORDER_COLOR,
-            accent: palette::DEEPSEEK_SKY,
-            shortcut: palette::DEEPSEEK_SKY,
+            border: theme.border,
+            accent: theme.status_working,
+            shortcut: theme.status_working,
         },
         RiskLevel::Destructive => ApprovalColors {
-            border: palette::DEEPSEEK_RED,
-            accent: palette::DEEPSEEK_RED,
-            shortcut: palette::STATUS_WARNING,
+            border: theme.error_fg,
+            accent: theme.error_fg,
+            shortcut: theme.status_warning,
         },
     }
 }
 
-fn approval_selected_style() -> Style {
+fn approval_selected_style(theme: &palette::UiTheme) -> Style {
     Style::default()
-        .fg(palette::SELECTION_TEXT)
-        .bg(palette::DEEPSEEK_BLUE)
+        .fg(theme.selection_text)
+        .bg(theme.selection_bg)
         .add_modifier(Modifier::BOLD)
 }
 
-fn approval_option_style(is_selected: bool, color: Color) -> Style {
+fn approval_option_style(is_selected: bool, color: Color, theme: &palette::UiTheme) -> Style {
     if is_selected {
-        approval_selected_style()
+        approval_selected_style(theme)
     } else {
         Style::default().fg(color)
     }
@@ -1389,22 +1576,26 @@ fn risk_badge_text(risk: RiskLevel, locale: Locale) -> &'static str {
     }
 }
 
-fn category_label_for(category: ToolCategory, locale: Locale) -> (&'static str, Color) {
+fn category_label_for(
+    category: ToolCategory,
+    locale: Locale,
+    theme: &palette::UiTheme,
+) -> (&'static str, Color) {
     match (locale, category) {
-        (Locale::ZhHans, ToolCategory::Safe) => ("安全", palette::STATUS_SUCCESS),
-        (Locale::ZhHans, ToolCategory::FileWrite) => ("文件写入", palette::STATUS_WARNING),
-        (Locale::ZhHans, ToolCategory::Shell) => ("Shell 命令", palette::STATUS_ERROR),
-        (Locale::ZhHans, ToolCategory::Network) => ("网络", palette::STATUS_WARNING),
-        (Locale::ZhHans, ToolCategory::McpRead) => ("MCP 读取", palette::DEEPSEEK_SKY),
-        (Locale::ZhHans, ToolCategory::McpAction) => ("MCP 操作", palette::STATUS_WARNING),
-        (Locale::ZhHans, ToolCategory::Unknown) => ("未知", palette::STATUS_ERROR),
-        (_, ToolCategory::Safe) => ("Safe", palette::STATUS_SUCCESS),
-        (_, ToolCategory::FileWrite) => ("File Write", palette::STATUS_WARNING),
-        (_, ToolCategory::Shell) => ("Shell Command", palette::STATUS_ERROR),
-        (_, ToolCategory::Network) => ("Network", palette::STATUS_WARNING),
-        (_, ToolCategory::McpRead) => ("MCP Read", palette::DEEPSEEK_SKY),
-        (_, ToolCategory::McpAction) => ("MCP Action", palette::STATUS_WARNING),
-        (_, ToolCategory::Unknown) => ("Unknown", palette::STATUS_ERROR),
+        (Locale::ZhHans, ToolCategory::Safe) => ("安全", theme.success),
+        (Locale::ZhHans, ToolCategory::FileWrite) => ("文件写入", theme.status_warning),
+        (Locale::ZhHans, ToolCategory::Shell) => ("Shell 命令", theme.error_fg),
+        (Locale::ZhHans, ToolCategory::Network) => ("网络", theme.status_warning),
+        (Locale::ZhHans, ToolCategory::McpRead) => ("MCP 读取", theme.status_working),
+        (Locale::ZhHans, ToolCategory::McpAction) => ("MCP 操作", theme.status_warning),
+        (Locale::ZhHans, ToolCategory::Unknown) => ("未知", theme.error_fg),
+        (_, ToolCategory::Safe) => ("Safe", theme.success),
+        (_, ToolCategory::FileWrite) => ("File Write", theme.status_warning),
+        (_, ToolCategory::Shell) => ("Shell Command", theme.error_fg),
+        (_, ToolCategory::Network) => ("Network", theme.status_warning),
+        (_, ToolCategory::McpRead) => ("MCP Read", theme.status_working),
+        (_, ToolCategory::McpAction) => ("MCP Action", theme.status_warning),
+        (_, ToolCategory::Unknown) => ("Unknown", theme.error_fg),
     }
 }
 
@@ -1443,10 +1634,19 @@ fn label_params(locale: Locale) -> &'static str {
     }
 }
 
-fn footer_controls(locale: Locale) -> &'static str {
+fn footer_controls(locale: Locale) -> String {
+    footer_controls_for_ascii(locale, palette::ascii_ui_enabled())
+}
+
+fn footer_controls_for_ascii(locale: Locale, ascii: bool) -> String {
+    let sep = if ascii {
+        "  |  "
+    } else {
+        "  \u{00B7}  "
+    };
     match locale {
-        Locale::ZhHans => "  ·  v：完整参数  ·  Esc：终止",
-        _ => "  ·  v: full params  ·  Esc: abort",
+        Locale::ZhHans => format!("{sep}v：完整参数{sep}Esc：终止"),
+        _ => format!("{sep}v: full params{sep}Esc: abort"),
     }
 }
 
@@ -1527,11 +1727,16 @@ fn option_abort(locale: Locale) -> &'static str {
 pub struct ElevationWidget<'a> {
     request: &'a ElevationRequest,
     selected: usize,
+    ui_theme: palette::UiTheme,
 }
 
 impl<'a> ElevationWidget<'a> {
-    pub fn new(request: &'a ElevationRequest, selected: usize) -> Self {
-        Self { request, selected }
+    pub fn new(request: &'a ElevationRequest, selected: usize, ui_theme: palette::UiTheme) -> Self {
+        Self {
+            request,
+            selected,
+            ui_theme,
+        }
     }
 }
 
@@ -1551,9 +1756,9 @@ impl Renderable for ElevationWidget<'_> {
         let mut lines = vec![
             Line::from(""),
             Line::from(vec![Span::styled(
-                "  ⚠ Sandbox Denied ",
+                format!("  {} Sandbox Denied ", widget_warning_prefix()),
                 Style::default()
-                    .fg(palette::STATUS_ERROR)
+                    .fg(self.ui_theme.error_fg)
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(""),
@@ -1562,7 +1767,7 @@ impl Renderable for ElevationWidget<'_> {
                 Span::styled(
                     &self.request.tool_name,
                     Style::default()
-                        .fg(palette::DEEPSEEK_SKY)
+                        .fg(self.ui_theme.status_working)
                         .add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -1573,7 +1778,7 @@ impl Renderable for ElevationWidget<'_> {
             let cmd_display = crate::utils::truncate_with_ellipsis(command, 45, "...");
             lines.push(Line::from(vec![
                 Span::raw("  Cmd:  "),
-                Span::styled(cmd_display, Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled(cmd_display, Style::default().fg(self.ui_theme.text_muted)),
             ]));
         }
 
@@ -1582,14 +1787,14 @@ impl Renderable for ElevationWidget<'_> {
             Span::raw("  Reason: "),
             Span::styled(
                 &self.request.denial_reason,
-                Style::default().fg(palette::STATUS_WARNING),
+                Style::default().fg(self.ui_theme.status_warning),
             ),
         ]));
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  Impact if approved:",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(self.ui_theme.text_muted),
         )));
         if self
             .request
@@ -1599,7 +1804,7 @@ impl Renderable for ElevationWidget<'_> {
         {
             lines.push(Line::from(Span::styled(
                 "    - network retry enables outbound downloads and HTTP requests",
-                Style::default().fg(palette::TEXT_PRIMARY),
+                Style::default().fg(self.ui_theme.text_body),
             )));
         }
         if self
@@ -1610,17 +1815,17 @@ impl Renderable for ElevationWidget<'_> {
         {
             lines.push(Line::from(Span::styled(
                 "    - write retry expands writable filesystem scope for this tool call",
-                Style::default().fg(palette::TEXT_PRIMARY),
+                Style::default().fg(self.ui_theme.text_body),
             )));
         }
         lines.push(Line::from(Span::styled(
             "    - full access removes sandbox restrictions entirely for this retry",
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(self.ui_theme.text_body),
         )));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  Choose how to proceed:",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(self.ui_theme.text_muted),
         )));
         lines.push(Line::from(""));
 
@@ -1629,8 +1834,8 @@ impl Renderable for ElevationWidget<'_> {
             let is_selected = i == self.selected;
             let style = if is_selected {
                 Style::default()
-                    .fg(palette::SELECTION_TEXT)
-                    .bg(palette::SELECTION_BG)
+                    .fg(self.ui_theme.selection_text)
+                    .bg(self.ui_theme.selection_bg)
             } else {
                 Style::default()
             };
@@ -1643,16 +1848,16 @@ impl Renderable for ElevationWidget<'_> {
             };
 
             let label_color = match option {
-                ElevationOption::Abort => palette::TEXT_MUTED,
-                ElevationOption::FullAccess => palette::STATUS_ERROR,
-                _ => palette::TEXT_PRIMARY,
+                ElevationOption::Abort => self.ui_theme.text_muted,
+                ElevationOption::FullAccess => self.ui_theme.error_fg,
+                _ => self.ui_theme.text_body,
             };
 
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     format!("[{key}] "),
-                    Style::default().fg(palette::STATUS_SUCCESS),
+                    Style::default().fg(self.ui_theme.success),
                 ),
                 Span::styled(option.label(), style.fg(label_color)),
             ]));
@@ -1660,18 +1865,20 @@ impl Renderable for ElevationWidget<'_> {
                 Span::raw("      "),
                 Span::styled(
                     option.description(),
-                    Style::default().fg(palette::TEXT_MUTED),
+                    Style::default().fg(self.ui_theme.text_muted),
                 ),
             ]));
         }
 
         let title = " Sandbox Elevation Required ";
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
-            .padding(Padding::uniform(1));
+        let block = widget_block_border(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1)),
+        );
 
         let paragraph = Paragraph::new(lines)
             .block(block)
@@ -1707,7 +1914,7 @@ fn apply_selection(lines: &mut [Line<'static>], top: usize, app: &App) {
 
     let selection_style = Style::default()
         .bg(app.ui_theme.selection_bg)
-        .fg(palette::SELECTION_TEXT);
+        .fg(app.ui_theme.selection_text);
 
     for (idx, line) in lines.iter_mut().enumerate() {
         let line_index = top + idx;
@@ -1761,6 +1968,7 @@ fn apply_send_flash(
     top: usize,
     history: &[HistoryCell],
     line_meta: &[TranscriptLineMeta],
+    flash_bg: Color,
 ) {
     // Find the last User cell index.
     let last_user_cell = history
@@ -1769,8 +1977,6 @@ fn apply_send_flash(
     let Some(target_cell) = last_user_cell else {
         return;
     };
-
-    let flash_bg = Color::Rgb(30, 40, 55); // subtle dark-blue tint
 
     for (idx, line) in lines.iter_mut().enumerate() {
         let line_index = top + idx;
@@ -1862,7 +2068,7 @@ fn truncate_display_width(text: &str, max_width: usize) -> String {
         return text.to_string();
     }
     if max_width <= 3 {
-        return text.chars().take(max_width).collect();
+        return ".".repeat(max_width);
     }
 
     let mut out = String::new();
@@ -1880,11 +2086,11 @@ fn truncate_display_width(text: &str, max_width: usize) -> String {
     out
 }
 
-fn vim_mode_style(mode: VimMode) -> Style {
+fn vim_mode_style(mode: VimMode, theme: &palette::UiTheme) -> Style {
     let color = match mode {
-        VimMode::Normal => palette::TEXT_MUTED,
-        VimMode::Insert => palette::DEEPSEEK_SKY,
-        VimMode::Visual => palette::MODE_PLAN,
+        VimMode::Normal => theme.text_muted,
+        VimMode::Insert => theme.status_working,
+        VimMode::Visual => theme.mode_plan,
     };
     Style::default().fg(color).bold()
 }
@@ -1904,19 +2110,23 @@ fn composer_top_right_chrome(app: &App, area_width: u16) -> Option<Line<'static>
     }
 
     let receipt_style = Style::default()
-        .fg(palette::STATUS_SUCCESS)
+        .fg(app.ui_theme.success)
         .add_modifier(Modifier::DIM);
     if let Some(receipt) = receipt {
         let receipt_text = receipt.trim();
         if app.composer.vim_enabled {
             let vim_label = app.composer.vim_mode.label();
             let vim_width = UnicodeWidthStr::width(vim_label);
-            let sep_width = UnicodeWidthStr::width(" · ");
+            let sep = footer_separator();
+            let sep_width = UnicodeWidthStr::width(sep);
             if vim_width + sep_width + 4 <= max_width {
                 let receipt_width = max_width.saturating_sub(vim_width + sep_width);
                 return Some(Line::from(vec![
-                    Span::styled(vim_label.to_string(), vim_mode_style(app.composer.vim_mode)),
-                    Span::styled(" · ", Style::default().fg(palette::TEXT_MUTED)),
+                    Span::styled(
+                        vim_label.to_string(),
+                        vim_mode_style(app.composer.vim_mode, &app.ui_theme),
+                    ),
+                    Span::styled(sep, Style::default().fg(app.ui_theme.text_muted)),
                     Span::styled(
                         truncate_display_width(receipt_text, receipt_width),
                         receipt_style,
@@ -1935,7 +2145,7 @@ fn composer_top_right_chrome(app: &App, area_width: u16) -> Option<Line<'static>
     if app.composer.vim_enabled {
         spans.push(Span::styled(
             truncate_display_width(app.composer.vim_mode.label(), max_width),
-            vim_mode_style(app.composer.vim_mode),
+            vim_mode_style(app.composer.vim_mode, &app.ui_theme),
         ));
     }
     if let Some(title) = session_title {
@@ -1951,7 +2161,7 @@ fn composer_top_right_chrome(app: &App, area_width: u16) -> Option<Line<'static>
             }
             spans.push(Span::styled(
                 truncate_display_width(title, remaining),
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(app.ui_theme.text_muted),
             ));
         }
     }
@@ -1975,20 +2185,21 @@ fn build_empty_state_lines(app: &App, area: Rect) -> Vec<Line<'static>> {
     let body_width = usize::from(area.width.saturating_sub(8).clamp(24, 72));
     let left_padding = usize::from(area.width.saturating_sub(body_width as u16) / 2);
     let inset = " ".repeat(left_padding);
+    let brand_prefix = empty_state_brand_prefix(app.theme_id);
 
     let body = vec![
         Line::from(Span::styled(
-            format!("{inset}>_ codewhale (v{})", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
+            format!("{inset}{brand_prefix} codewhale (v{})", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(app.ui_theme.accent_primary).bold(),
         )),
         Line::from(""),
         Line::from(Span::styled(
             format!("{inset}model: {}  /model to switch", app.model),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(app.ui_theme.text_muted),
         )),
         Line::from(Span::styled(
             format!("{inset}directory: {workspace}"),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(app.ui_theme.text_muted),
         )),
     ];
 
@@ -2000,6 +2211,21 @@ fn build_empty_state_lines(app: &App, area: Rect) -> Vec<Line<'static>> {
     }
     lines.extend(body);
     lines
+}
+
+fn empty_state_brand_prefix(theme_id: palette::ThemeId) -> &'static str {
+    empty_state_brand_prefix_with_ascii(theme_id, palette::ascii_ui_enabled())
+}
+
+fn empty_state_brand_prefix_with_ascii(
+    theme_id: palette::ThemeId,
+    ascii: bool,
+) -> &'static str {
+    if theme_id == palette::ThemeId::DeepSeekShell {
+        if ascii { ">" } else { "\u{276F}" }
+    } else {
+        ">_"
+    }
 }
 
 pub fn composer_input_rows_budget(inner_height: u16, extra_lines: usize) -> usize {
@@ -2022,6 +2248,86 @@ fn placeholder_visual_lines(content_width: usize) -> usize {
 
 fn placeholder_visual_lines_for(placeholder: &str, content_width: usize) -> usize {
     wrap_text(placeholder, content_width).len().max(1)
+}
+
+fn composer_prompt_for_theme(theme_id: palette::ThemeId) -> &'static str {
+    composer_prompt_for_theme_with_ascii(theme_id, palette::ascii_ui_enabled())
+}
+
+fn composer_menu_marker(is_selected: bool) -> &'static str {
+    composer_menu_marker_with_ascii(is_selected, palette::ascii_ui_enabled())
+}
+
+fn composer_submit_prefix() -> &'static str {
+    composer_submit_prefix_with_ascii(palette::ascii_ui_enabled())
+}
+
+fn composer_submit_prefix_with_ascii(ascii: bool) -> &'static str {
+    if ascii { "Enter" } else { "\u{21B5}" }
+}
+
+fn composer_menu_marker_with_ascii(is_selected: bool, ascii: bool) -> &'static str {
+    if !is_selected {
+        return " ";
+    }
+    if ascii { ">" } else { "\u{25B8}" }
+}
+
+fn composer_prompt_for_theme_with_ascii(
+    theme_id: palette::ThemeId,
+    ascii: bool,
+) -> &'static str {
+    if theme_id == palette::ThemeId::DeepSeekShell {
+        if ascii {
+            ASCII_COMPOSER_PROMPT
+        } else {
+            DEEPSEEK_SHELL_COMPOSER_PROMPT
+        }
+    } else {
+        ""
+    }
+}
+
+pub fn composer_input_content_width(inner_width: u16, theme_id: palette::ThemeId) -> usize {
+    usize::from(inner_width.max(1))
+        .saturating_sub(composer_prompt_for_theme(theme_id).width())
+        .max(1)
+}
+
+fn line_with_composer_prompt<'a>(
+    prompt: &str,
+    prompt_color: Color,
+    body: Span<'a>,
+) -> Line<'a> {
+    if prompt.is_empty() {
+        Line::from(body)
+    } else {
+        Line::from(vec![composer_prompt_span(prompt, prompt_color), body])
+    }
+}
+
+fn line_spans_with_composer_prompt<'a>(
+    prompt: &str,
+    prompt_color: Color,
+    mut body: Vec<Span<'a>>,
+) -> Line<'a> {
+    if prompt.is_empty() {
+        Line::from(body)
+    } else {
+        let mut spans = Vec::with_capacity(body.len() + 1);
+        spans.push(composer_prompt_span(prompt, prompt_color));
+        spans.append(&mut body);
+        Line::from(spans)
+    }
+}
+
+fn composer_prompt_span<'a>(prompt: &str, prompt_color: Color) -> Span<'a> {
+    Span::styled(
+        prompt.to_string(),
+        Style::default()
+            .fg(prompt_color)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 fn composer_min_input_rows(density: ComposerDensity) -> usize {
@@ -2047,6 +2353,7 @@ fn composer_height(
     extra_lines: usize,
     density: ComposerDensity,
     show_panel: bool,
+    prompt_width: usize,
 ) -> u16 {
     let has_panel = show_panel && available_height >= 3 && width >= 12;
     let chrome_height = if has_panel {
@@ -2058,7 +2365,9 @@ fn composer_height(
         usize::from(width.saturating_sub(2).max(1))
     } else {
         usize::from(width.max(1))
-    };
+    }
+    .saturating_sub(prompt_width)
+    .max(1);
     let mut line_count = wrap_input_lines(input, content_width).len();
     if line_count == 0 {
         line_count = 1;
@@ -2563,10 +2872,12 @@ fn line_spans_with_selection<'a>(
     line_end: usize,
     sel_start: usize,
     sel_end: usize,
+    normal_fg: Color,
     highlight_bg: Color,
+    selection_fg: Color,
 ) -> Vec<Span<'a>> {
-    let normal_style = Style::default().fg(palette::TEXT_PRIMARY);
-    let sel_style = Style::default().fg(palette::TEXT_PRIMARY).bg(highlight_bg);
+    let normal_style = Style::default().fg(normal_fg);
+    let sel_style = Style::default().fg(selection_fg).bg(highlight_bg);
 
     // No overlap between this line and the selection
     if line_end <= sel_start || line_start >= sel_end {
@@ -2612,10 +2923,14 @@ mod tests {
     use super::{
         ApprovalWidget, COMPOSER_PANEL_HEIGHT, ChatWidget, ComposerWidget, Renderable,
         SlashMenuEntry, apply_selection_to_line, build_empty_state_lines, composer_height,
-        composer_max_height, composer_min_input_rows, composer_top_padding, compute_takeover_area,
-        cursor_row_col, layout_input, pad_lines_to_bottom, placeholder_visual_lines,
+        composer_max_height, composer_menu_marker_with_ascii, composer_min_input_rows,
+        composer_prompt_for_theme, composer_prompt_for_theme_with_ascii, composer_top_padding,
+        composer_submit_prefix_with_ascii, compute_takeover_area, cursor_row_col,
+        empty_state_brand_prefix_with_ascii, layout_input, pad_lines_to_bottom,
+        placeholder_visual_lines,
         push_command_entry, should_render_empty_state, slash_completion_hints, wrap_input_lines,
-        wrap_text,
+        widget_ellipsis, widget_left_rail_char, widget_scrollbar_thumb, widget_scrollbar_track,
+        widget_skill_marker, widget_warning_prefix, wrap_text,
     };
     use crate::config::{ApiProvider, Config};
     use crate::localization::Locale;
@@ -2626,7 +2941,7 @@ mod tests {
     use ratatui::{
         buffer::Buffer,
         layout::Rect,
-        style::Style,
+        style::{Color, Style},
         text::{Line, Span},
     };
     use std::path::PathBuf;
@@ -3055,19 +3370,23 @@ mod tests {
 
     #[test]
     fn selection_style_uses_explicit_selection_text_role() {
+        let mut theme = palette::UI_THEME;
+        theme.text_body = ratatui::style::Color::Indexed(250);
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        theme.selection_text = ratatui::style::Color::Indexed(255);
         let line = Line::from(Span::styled(
             "hello world",
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(theme.text_body),
         ));
         let selection_style = Style::default()
-            .bg(palette::SELECTION_BG)
-            .fg(palette::SELECTION_TEXT);
+            .bg(theme.selection_bg)
+            .fg(theme.selection_text);
 
         let styled = apply_selection_to_line(&line, 0, 5, selection_style);
         assert_eq!(styled.len(), 2);
         assert_eq!(styled[0].content.as_ref(), "hello");
-        assert_eq!(styled[0].style.fg, Some(palette::SELECTION_TEXT));
-        assert_eq!(styled[0].style.bg, Some(palette::SELECTION_BG));
+        assert_eq!(styled[0].style.fg, Some(theme.selection_text));
+        assert_eq!(styled[0].style.bg, Some(theme.selection_bg));
         assert_eq!(styled[1].content.as_ref(), " world");
     }
 
@@ -3085,6 +3404,7 @@ mod tests {
             menu_lines,
             ComposerDensity::Comfortable,
             true,
+            0,
         );
         let has_panel = available_height >= 3 && width >= 12;
         let chrome_height = if has_panel {
@@ -3117,14 +3437,14 @@ mod tests {
 
     #[test]
     fn composer_height_prefers_panel_shape_when_space_allows() {
-        let height = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, true);
+        let height = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, true, 0);
         assert_eq!(height, 5);
     }
 
     #[test]
     fn composer_height_skips_panel_chrome_when_border_disabled() {
-        let with_border = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, true);
-        let without_border = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, false);
+        let with_border = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, true, 0);
+        let without_border = composer_height("", 40, 8, 0, ComposerDensity::Comfortable, false, 0);
 
         assert_eq!(with_border, 5);
         assert_eq!(without_border, 1);
@@ -3165,6 +3485,143 @@ mod tests {
         // cursor_x = 0 + (1-0) + 0 = 1
         // cursor_y = 0 + (1-0) + (2+0) = 3
         assert_eq!(widget.cursor_pos(area), Some((1, 3)));
+    }
+
+    #[test]
+    fn deepseek_shell_composer_renders_prompt_and_offsets_cursor() {
+        let mut app = create_test_app();
+        app.theme_id = palette::ThemeId::DeepSeekShell;
+        app.ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        app.ui_theme.accent_primary = Color::Indexed(42);
+        app.composer_density = ComposerDensity::Comfortable;
+        app.input = "hello".to_string();
+        app.cursor_position = app.input.chars().count();
+
+        let slash_menu_entries = Vec::<SlashMenuEntry>::new();
+        let mention_menu_entries = Vec::<String>::new();
+        let widget = ComposerWidget::new(&app, 5, &slash_menu_entries, &mention_menu_entries);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        let mut buf = Buffer::empty(area);
+
+        widget.render(area, &mut buf);
+        let rendered = buffer_text(&buf, area);
+
+        assert!(
+            rendered.contains(&format!("{}hello", composer_prompt_for_theme(app.theme_id))),
+            "{rendered:?}"
+        );
+        assert_eq!(buf[(0, 0)].fg, app.ui_theme.mode_agent);
+        assert_eq!(buf[(1, 3)].fg, app.ui_theme.accent_primary);
+        assert_eq!(buf[(3, 3)].symbol(), "h");
+        assert_eq!(buf[(3, 3)].fg, app.ui_theme.text_body);
+        assert_eq!(widget.cursor_pos(area), Some((8, 3)));
+    }
+
+    #[test]
+    fn deepseek_shell_composer_fits_80_columns() {
+        let mut app = create_test_app();
+        app.theme_id = palette::ThemeId::DeepSeekShell;
+        app.ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        app.composer_density = ComposerDensity::Comfortable;
+        app.input = "summarize the current workspace state and keep the answer concise".to_string();
+        app.cursor_position = app.input.chars().count();
+
+        let slash_menu_entries = Vec::<SlashMenuEntry>::new();
+        let mention_menu_entries = Vec::<String>::new();
+        let widget = ComposerWidget::new(&app, 5, &slash_menu_entries, &mention_menu_entries);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 5,
+        };
+        let mut buf = Buffer::empty(area);
+
+        widget.render(area, &mut buf);
+        let rendered = buffer_text(&buf, area);
+
+        assert!(
+            rendered.contains(composer_prompt_for_theme(app.theme_id)),
+            "{rendered:?}"
+        );
+        for line in rendered.lines() {
+            assert!(
+                line.width() <= usize::from(area.width),
+                "composer line overflow at 80 columns: {line:?}"
+            );
+        }
+        let Some((cursor_x, cursor_y)) = widget.cursor_pos(area) else {
+            panic!("expected composer cursor");
+        };
+        assert!(cursor_x < area.width, "cursor x overflow: {cursor_x}");
+        assert!(cursor_y < area.height, "cursor y overflow: {cursor_y}");
+    }
+
+    #[test]
+    fn deepseek_shell_composer_prompt_has_ascii_fallback() {
+        assert_eq!(
+            composer_prompt_for_theme_with_ascii(palette::ThemeId::DeepSeekShell, false),
+            "\u{276F} "
+        );
+        assert_eq!(
+            composer_prompt_for_theme_with_ascii(palette::ThemeId::DeepSeekShell, true),
+            "> "
+        );
+        assert_eq!(
+            composer_prompt_for_theme_with_ascii(palette::ThemeId::Whale, true),
+            ""
+        );
+    }
+
+    #[test]
+    fn composer_menu_marker_has_ascii_fallback() {
+        assert_eq!(composer_menu_marker_with_ascii(false, true), " ");
+        assert_eq!(composer_menu_marker_with_ascii(true, true), ">");
+        assert_eq!(composer_menu_marker_with_ascii(true, false), "\u{25B8}");
+    }
+
+    #[test]
+    fn composer_submit_prefix_has_ascii_fallback() {
+        assert_eq!(composer_submit_prefix_with_ascii(true), "Enter");
+        assert_eq!(composer_submit_prefix_with_ascii(false), "\u{21B5}");
+    }
+
+    #[test]
+    fn shared_widget_symbols_have_ascii_fallback() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(widget_ellipsis(), "...");
+            assert_eq!(widget_warning_prefix(), "!!");
+            assert_eq!(widget_title_separator(), "-");
+            assert_eq!(widget_skill_marker(), "+");
+            assert_eq!(widget_scrollbar_track(), "|");
+            assert_eq!(widget_scrollbar_thumb(), "|");
+            assert_eq!(widget_left_rail_char(), '|');
+        } else {
+            assert_eq!(widget_ellipsis(), "\u{2026}");
+            assert_eq!(widget_warning_prefix(), "\u{26A0}");
+            assert_eq!(widget_title_separator(), "\u{2014}");
+            assert_eq!(widget_skill_marker(), "\u{2726}");
+            assert_eq!(widget_scrollbar_track(), "\u{2502}");
+            assert_eq!(widget_scrollbar_thumb(), "\u{2503}");
+            assert_eq!(widget_left_rail_char(), '\u{2503}');
+        }
+    }
+
+    #[test]
+    fn approval_footer_controls_have_ascii_separator_fallback() {
+        assert_eq!(
+            footer_controls_for_ascii(Locale::ZhHans, true),
+            "  |  v：完整参数  |  Esc：终止"
+        );
+        assert_eq!(
+            footer_controls_for_ascii(Locale::ZhHans, false),
+            "  \u{00B7}  v：完整参数  \u{00B7}  Esc：终止"
+        );
     }
 
     #[test]
@@ -3382,6 +3839,72 @@ mod tests {
         assert!(rendered.contains("directory: /tmp/codewhale-test-workspace"));
     }
 
+    #[test]
+    fn deepseek_shell_empty_state_uses_shell_prompt_language() {
+        let mut app = create_test_app();
+        app.theme_id = palette::ThemeId::DeepSeekShell;
+        app.ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+
+        let lines = build_empty_state_lines(&app, Rect::new(0, 0, 100, 20));
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains(&format!(
+            "\u{276F} codewhale (v{})",
+            env!("CARGO_PKG_VERSION")
+        )));
+    }
+
+    #[test]
+    fn empty_state_brand_prefix_has_ascii_fallback() {
+        assert_eq!(
+            empty_state_brand_prefix_with_ascii(palette::ThemeId::DeepSeekShell, false),
+            "\u{276F}"
+        );
+        assert_eq!(
+            empty_state_brand_prefix_with_ascii(palette::ThemeId::DeepSeekShell, true),
+            ">"
+        );
+        assert_eq!(
+            empty_state_brand_prefix_with_ascii(palette::ThemeId::Whale, true),
+            ">_"
+        );
+    }
+
+    #[test]
+    fn truncate_display_width_respects_cjk_for_tiny_widths() {
+        for max_width in 0..=3 {
+            let truncated =
+                truncate_display_width("\u{4fee}\u{590d}\u{7ec8}\u{7aef}\u{5e03}\u{5c40}", max_width);
+
+            assert!(
+                UnicodeWidthStr::width(truncated.as_str()) <= max_width,
+                "truncated text overflowed {max_width} columns: {truncated:?}"
+            );
+            assert!(
+                truncated.is_char_boundary(truncated.len()),
+                "truncated text must not split UTF-8 codepoints: {truncated:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_display_width_preserves_exact_budget_before_ellipsis() {
+        let truncated =
+            truncate_display_width("\u{4fee}\u{590d}\u{7ec8}\u{7aef}\u{5e03}\u{5c40}", 7);
+
+        assert_eq!(truncated, "\u{4fee}\u{590d}...");
+        assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 7);
+    }
+
     /// Probe: confirm `cell.lines_with_motion` returns no Line whose total
     /// visual width exceeds the requested area width, even for pathological
     /// long single-line tool results.
@@ -3569,8 +4092,8 @@ mod tests {
         // The rightmost column should host the scrollbar track/thumb.
         // The penultimate column should still hold normal content (a digit,
         // letter, or space — never the scrollbar glyph).
-        let scrollbar_track = "│";
-        let scrollbar_thumb = "┃";
+        let scrollbar_track = widget_scrollbar_track();
+        let scrollbar_thumb = widget_scrollbar_thumb();
         let mut scrollbar_seen = false;
         for y in 0..area.height {
             let last = buf[(area.width - 1, y)].symbol();
@@ -3618,7 +4141,15 @@ mod tests {
             .expect("button appears when transcript is not at tail");
         assert_eq!(button.width, 3);
         assert_eq!(button.height, 3);
-        assert_eq!(buf[(button.x + 1, button.y + 1)].symbol(), "↓");
+        assert_eq!(
+            buf[(button.x + 1, button.y + 1)].symbol(),
+            jump_to_latest_symbol()
+        );
+        if palette::ascii_ui_enabled() {
+            assert_eq!(buf[(button.x, button.y)].symbol(), "+");
+            assert_eq!(buf[(button.x + 1, button.y)].symbol(), "-");
+            assert_eq!(buf[(button.x, button.y + 1)].symbol(), "|");
+        }
     }
 
     #[test]
@@ -3775,7 +4306,10 @@ mod tests {
             "exec_shell:git commit",
         );
         let view = crate::tui::approval::ApprovalView::new(request.clone());
-        let widget = ApprovalWidget::new(&request, &view);
+        let mut theme = palette::UI_THEME;
+        theme.selection_bg = ratatui::style::Color::Rgb(1, 2, 3);
+        theme.selection_text = ratatui::style::Color::Rgb(4, 5, 6);
+        let widget = ApprovalWidget::new(&request, &view, theme);
 
         for area in [Rect::new(0, 0, 162, 17), Rect::new(0, 0, 39, 17)] {
             let card_area = compute_takeover_area(area);
@@ -3799,7 +4333,7 @@ mod tests {
             "exec_shell:git commit",
         );
         let view = crate::tui::approval::ApprovalView::new(request.clone());
-        let widget = ApprovalWidget::new(&request, &view);
+        let widget = ApprovalWidget::new(&request, &view, palette::UI_THEME);
         let area = Rect::new(0, 0, 100, 30);
         let mut buf = Buffer::empty(area);
 
@@ -3808,21 +4342,21 @@ mod tests {
         let selected_row = (area.y..area.y.saturating_add(area.height))
             .find(|&y| {
                 (area.x..area.x.saturating_add(area.width))
-                    .any(|x| buf[(x, y)].bg == palette::DEEPSEEK_BLUE)
+                    .any(|x| buf[(x, y)].bg == theme.selection_bg)
             })
-            .expect("selected approval row should use blue background");
+            .expect("selected approval row should use theme selection background");
         let highlighted_cells = (area.x..area.x.saturating_add(area.width))
             .filter(|&x| {
                 let cell = &buf[(x, selected_row)];
                 !cell.symbol().trim().is_empty()
-                    && cell.bg == palette::DEEPSEEK_BLUE
-                    && cell.fg == palette::SELECTION_TEXT
+                    && cell.bg == theme.selection_bg
+                    && cell.fg == theme.selection_text
             })
             .count();
 
         assert!(
             highlighted_cells >= 4,
-            "selected destructive option should render visible blue/white text"
+            "selected destructive option should render visible theme selection text"
         );
     }
 

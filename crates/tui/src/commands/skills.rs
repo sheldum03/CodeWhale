@@ -11,7 +11,7 @@ use crate::skills::install::{
 use crate::tui::app::App;
 use crate::tui::history::HistoryCell;
 
-use super::CommandResult;
+use super::{CommandResult, command_ellipsis, command_rule, command_text_separator};
 
 fn discover_visible_skills(app: &App) -> SkillRegistry {
     crate::skills::discover_for_workspace_and_dir(&app.workspace, &app.skills_dir)
@@ -109,7 +109,7 @@ pub fn list_skills(app: &mut App, arg: Option<&str>) -> CommandResult {
     } else {
         format!("Available skills ({}):\n", registry.len())
     };
-    output.push_str("─────────────────────────────\n");
+    let _ = writeln!(output, "{}", command_rule());
 
     if prefix.is_some() {
         // Filtered view: keep the flat list — the user already narrowed.
@@ -193,9 +193,7 @@ pub fn run_skill(app: &mut App, name: Option<&str>) -> CommandResult {
     let raw = match name {
         Some(n) => n.trim(),
         None => {
-            return CommandResult::error(
-                "Usage: /skill <name>\n\nSubcommands:\n  /skill install <github:owner/repo|https://…|<registry-name>>\n  /skill update <name>\n  /skill uninstall <name>\n  /skill trust <name>",
-            );
+            return CommandResult::error(skill_usage_message());
         }
     };
 
@@ -260,9 +258,7 @@ fn activate_skill(app: &mut App, name: &str) -> CommandResult {
 
 fn install_skill(app: &mut App, spec: &str) -> CommandResult {
     if spec.is_empty() {
-        return CommandResult::error(
-            "Usage: /skill install <github:owner/repo|https://…|<registry-name>>",
-        );
+        return CommandResult::error(skill_install_usage());
     }
     let source = match InstallSource::parse(spec) {
         Ok(s) => s,
@@ -300,6 +296,20 @@ fn install_skill(app: &mut App, spec: &str) -> CommandResult {
         }
         Err(err) => CommandResult::error(format!("Install failed: {err:#}")),
     }
+}
+
+fn skill_install_usage() -> String {
+    format!(
+        "Usage: /skill install <github:owner/repo|https://{}|<registry-name>>",
+        command_ellipsis()
+    )
+}
+
+fn skill_usage_message() -> String {
+    format!(
+        "Usage: /skill <name>\n\nSubcommands:\n  {}\n  /skill update <name>\n  /skill uninstall <name>\n  /skill trust <name>",
+        skill_install_usage()
+    )
 }
 
 // ─── /skill update ─────────────────────────────────────────────────────────
@@ -376,11 +386,12 @@ pub fn list_remote_skills(app: &mut App) -> CommandResult {
                 return CommandResult::message("Registry is empty.");
             }
             let mut out = format!("Available remote skills ({}):\n", doc.skills.len());
-            out.push_str("─────────────────────────────\n");
+            let _ = writeln!(out, "{}", command_rule());
             for (name, entry) in &doc.skills {
                 let _ = writeln!(
                     out,
-                    "  {name} — {} (source: {})",
+                    "  {name}{}{} (source: {})",
+                    command_text_separator(),
                     entry.description.clone().unwrap_or_default(),
                     entry.source
                 );
@@ -429,25 +440,43 @@ fn sync_skills(app: &mut App) -> CommandResult {
                 match outcome {
                     SkillSyncOutcome::Downloaded { name, path } => {
                         downloaded += 1;
-                        let _ = writeln!(out, "  [+] {name} — downloaded to {}", path.display());
+                        let _ = writeln!(
+                            out,
+                            "  [+] {name}{}downloaded to {}",
+                            command_text_separator(),
+                            path.display()
+                        );
                     }
                     SkillSyncOutcome::Fresh { name } => {
                         fresh += 1;
-                        let _ = writeln!(out, "  [=] {name} — already up to date");
+                        let _ = writeln!(
+                            out,
+                            "  [=] {name}{}already up to date",
+                            command_text_separator()
+                        );
                     }
                     SkillSyncOutcome::Failed { name, reason } => {
                         failed += 1;
-                        let _ = writeln!(out, "  [!] {name} — failed: {reason}");
+                        let _ = writeln!(
+                            out,
+                            "  [!] {name}{}failed: {reason}",
+                            command_text_separator()
+                        );
                     }
                     SkillSyncOutcome::Denied { name, host } => {
                         failed += 1;
-                        let _ = writeln!(out, "  [!] {name} — network denied ({host})");
+                        let _ = writeln!(
+                            out,
+                            "  [!] {name}{}network denied ({host})",
+                            command_text_separator()
+                        );
                     }
                     SkillSyncOutcome::NeedsApproval { name, host } => {
                         failed += 1;
                         let _ = writeln!(
                             out,
-                            "  [?] {name} — needs approval for {host} (run `/network allow {host}` then retry)"
+                            "  [?] {name}{}needs approval for {host} (run `/network allow {host}` then retry)",
+                            command_text_separator()
                         );
                     }
                 }
@@ -593,6 +622,7 @@ fn format_registry_error(prefix: &str, err: &anyhow::Error) -> String {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::test_support::EnvVarGuard;
     use crate::tui::app::{App, TuiOptions};
     use std::ffi::OsString;
     use tempfile::TempDir;
@@ -640,6 +670,17 @@ mod tests {
                 Self::restore_var("USERPROFILE", self.userprofile_prev.take());
             }
         }
+    }
+
+    #[test]
+    fn skill_usage_uses_ascii_ellipsis_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let usage = skill_usage_message();
+
+        assert!(usage.contains("https://..."));
+        assert!(!usage.contains('\u{2026}'), "got: {usage}");
     }
 
     fn create_test_app_with_tmpdir(tmpdir: &TempDir) -> App {

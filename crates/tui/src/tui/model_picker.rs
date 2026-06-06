@@ -16,11 +16,21 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::{ApiProvider, model_completion_names_for_provider};
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tui::app::{App, ReasoningEffort};
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
+
+fn model_picker_nav_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " Up/Down "
+    } else {
+        " \u{2191}\u{2193} "
+    }
+}
 
 /// Thinking-effort rows shown in the picker, in the order DeepSeek
 /// behaviorally distinguishes them.
@@ -50,6 +60,7 @@ pub struct ModelPickerView {
     /// so the picker doesn't quietly forget the user's chosen IDs.
     show_custom_model_row: bool,
     model_rows: Vec<ModelPickerRow>,
+    ui_theme: UiTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +109,14 @@ impl ModelPickerView {
             focus: Pane::Model,
             show_custom_model_row,
             model_rows,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     #[cfg(test)]
@@ -209,9 +227,9 @@ impl ModelPickerView {
         focused: bool,
     ) {
         let border_style = if focused {
-            Style::default().fg(palette::DEEPSEEK_SKY)
+            Style::default().fg(self.ui_theme.accent_primary)
         } else {
-            Style::default().fg(palette::BORDER_COLOR)
+            Style::default().fg(self.ui_theme.border)
         };
         let visible_height = usize::from(area.height.saturating_sub(2));
         let (start, end) = visible_row_window(selected, rows.len(), visible_height);
@@ -220,35 +238,38 @@ impl ModelPickerView {
         } else {
             format!(" {title} ")
         };
-        let block = Block::default()
-            .title(Line::from(Span::styled(
-                title,
-                Style::default().fg(palette::TEXT_PRIMARY).bold(),
-            )))
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .style(Style::default());
-        let inner = block.inner(area);
-        block.render(area, buf);
+        let title_style = Style::default().fg(self.ui_theme.text_body).bold();
+        let inner = if palette::ascii_ui_enabled() {
+            render_ascii_model_picker_pane(area, buf, &title, border_style, title_style)
+        } else {
+            let block = Block::default()
+                .title(Line::from(Span::styled(title, title_style)))
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .style(Style::default());
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        };
 
         let mut lines = Vec::with_capacity(end.saturating_sub(start));
         for (idx, (label, hint)) in rows.iter().enumerate().skip(start).take(end - start) {
             let is_selected = idx == selected;
-            let marker = if is_selected { "▸" } else { " " };
+            let marker = model_picker_marker(is_selected);
             let label_style = if is_selected {
                 Style::default()
-                    .fg(palette::SELECTION_TEXT)
-                    .bg(palette::SELECTION_BG)
+                    .fg(self.ui_theme.selection_text)
+                    .bg(self.ui_theme.selection_bg)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(palette::TEXT_PRIMARY)
+                Style::default().fg(self.ui_theme.text_body)
             };
             let hint_style = if is_selected {
                 Style::default()
-                    .fg(palette::SELECTION_TEXT)
-                    .bg(palette::SELECTION_BG)
+                    .fg(self.ui_theme.selection_text)
+                    .bg(self.ui_theme.selection_bg)
             } else {
-                Style::default().fg(palette::TEXT_MUTED)
+                Style::default().fg(self.ui_theme.text_muted)
             };
             let spans = picker_row_spans(
                 label,
@@ -275,6 +296,16 @@ fn visible_row_window(selected: usize, total: usize, viewport_height: usize) -> 
         start = total.saturating_sub(visible);
     }
     (start, start + visible)
+}
+
+fn model_picker_marker(selected: bool) -> &'static str {
+    if !selected {
+        " "
+    } else if palette::ascii_ui_enabled() {
+        ">"
+    } else {
+        "\u{25B8}"
+    }
 }
 
 fn picker_row_spans<'a>(
@@ -527,29 +558,36 @@ impl ModelPickerView {
 
         Clear.render(popup_area, buf);
 
-        // Outer chrome with title + footer hint.
-        let outer = Block::default()
-            .title(Line::from(Span::styled(
-                " Model & thinking ",
-                Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
-                    .add_modifier(Modifier::BOLD),
-            )))
-            .title_bottom(Line::from(vec![
-                Span::styled(" ↑↓ ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("move "),
-                Span::styled(" Tab ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("switch "),
-                Span::styled(" Enter ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("apply "),
-                Span::styled(" Esc ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::raw("cancel "),
-            ]))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default());
-        let inner = outer.inner(popup_area);
-        outer.render(popup_area, buf);
+        let inner = if palette::ascii_ui_enabled() {
+            render_ascii_model_picker_chrome(popup_area, buf, self.ui_theme)
+        } else {
+            let outer = Block::default()
+                .title(Line::from(Span::styled(
+                    " Model & thinking ",
+                    Style::default()
+                        .fg(self.ui_theme.accent_primary)
+                        .add_modifier(Modifier::BOLD),
+                )))
+                .title_bottom(Line::from(vec![
+                    Span::styled(
+                        model_picker_nav_hint(),
+                        Style::default().fg(self.ui_theme.text_muted),
+                    ),
+                    Span::raw("move "),
+                    Span::styled(" Tab ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("switch "),
+                    Span::styled(" Enter ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("apply "),
+                    Span::styled(" Esc ", Style::default().fg(self.ui_theme.text_muted)),
+                    Span::raw("cancel "),
+                ]))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default());
+            let inner = outer.inner(popup_area);
+            outer.render(popup_area, buf);
+            inner
+        };
 
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -598,12 +636,172 @@ impl ModelPickerView {
     }
 }
 
+fn render_ascii_model_picker_chrome(area: Rect, buf: &mut Buffer, theme: UiTheme) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(theme.text_muted)
+        .bg(theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(
+            " Model & thinking ",
+            area.width.saturating_sub(4) as usize,
+        );
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let footer = ascii_prefix(
+            " Up/Down move Tab switch Enter apply Esc cancel ",
+            area.width.saturating_sub(4) as usize,
+        );
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &footer,
+            footer_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    }
+}
+
+fn render_ascii_model_picker_pane(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    border_style: Style,
+    title_style: Style,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+
+    Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
     use crate::tui::app::{App, TuiOptions};
     use std::path::PathBuf;
+    use unicode_width::UnicodeWidthStr;
 
     fn create_test_app() -> (App, std::sync::MutexGuard<'static, ()>) {
         let lock = crate::test_support::lock_test_env();
@@ -787,11 +985,83 @@ mod tests {
     }
 
     #[test]
+    fn model_picker_marker_has_ascii_fallback() {
+        assert_eq!(model_picker_marker(false), " ");
+        let selected = model_picker_marker(true);
+        if palette::ascii_ui_enabled() {
+            assert_eq!(selected, ">");
+        } else {
+            assert_eq!(selected, "\u{25B8}");
+        }
+    }
+
+    #[test]
+    fn ascii_model_picker_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner =
+            render_ascii_model_picker_chrome(area, &mut buf, palette::DEEPSEEK_SHELL_UI_THEME);
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 1, area.y + 1, 22, 6));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 模型选择 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix must not split UTF-8 codepoints: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn ascii_model_picker_pane_uses_plain_border_chars() {
+        let area = Rect::new(2, 2, 18, 6);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 24, 10));
+        let inner = render_ascii_model_picker_pane(
+            area,
+            &mut buf,
+            " Models ",
+            Style::default(),
+            Style::default(),
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 1, area.y + 1, 16, 4));
+    }
+
+    #[test]
     fn narrow_picker_rows_hide_hint_before_clipping_model_id() {
         let spans = picker_row_spans(
             "minimax/minimax-m3",
             "1M multimodal",
-            "▸",
+            model_picker_marker(true),
             24,
             Style::default(),
             Style::default(),

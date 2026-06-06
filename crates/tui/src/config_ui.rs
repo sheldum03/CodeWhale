@@ -56,6 +56,10 @@ pub struct SettingsSection {
     pub show_thinking: bool,
     pub show_tool_details: bool,
     pub locale: UiLocale,
+    #[schemars(
+        title = "Theme",
+        description = "TUI theme. Use deepseek-shell for the opt-in DeepSeek Shell CLI theme; use system to return to terminal-aware defaults."
+    )]
     pub theme: UiThemeValue,
     #[schemars(
         title = "Background color",
@@ -180,6 +184,10 @@ pub enum UiLocale {
 #[serde(rename_all = "kebab-case")]
 pub enum UiThemeValue {
     System,
+    Terminal,
+    #[serde(rename = "deepseek-shell")]
+    #[schemars(rename = "deepseek-shell")]
+    DeepSeekShell,
     Dark,
     Light,
     Grayscale,
@@ -187,7 +195,9 @@ pub enum UiThemeValue {
     TokyoNight,
     Dracula,
     GruvboxDark,
+    Claude,
     Matrix,
+    SolarizedLight,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -739,6 +749,8 @@ impl UiThemeValue {
     fn as_setting(self) -> &'static str {
         match self {
             Self::System => "system",
+            Self::Terminal => "terminal",
+            Self::DeepSeekShell => "deepseek-shell",
             Self::Dark => "dark",
             Self::Light => "light",
             Self::Grayscale => "grayscale",
@@ -746,13 +758,17 @@ impl UiThemeValue {
             Self::TokyoNight => "tokyo-night",
             Self::Dracula => "dracula",
             Self::GruvboxDark => "gruvbox-dark",
+            Self::Claude => "claude",
             Self::Matrix => "matrix",
+            Self::SolarizedLight => "solarized-light",
         }
     }
 
     fn from_setting(value: &str) -> Result<Self> {
         match crate::palette::normalize_theme_name(value) {
             Some("system") => Ok(Self::System),
+            Some("terminal") => Ok(Self::Terminal),
+            Some("deepseek-shell") => Ok(Self::DeepSeekShell),
             Some("dark") => Ok(Self::Dark),
             Some("light") => Ok(Self::Light),
             Some("grayscale") => Ok(Self::Grayscale),
@@ -760,7 +776,9 @@ impl UiThemeValue {
             Some("tokyo-night") => Ok(Self::TokyoNight),
             Some("dracula") => Ok(Self::Dracula),
             Some("gruvbox-dark") => Ok(Self::GruvboxDark),
+            Some("claude") => Ok(Self::Claude),
             Some("matrix") => Ok(Self::Matrix),
+            Some("solarized-light") => Ok(Self::SolarizedLight),
             Some(other) => bail!("unsupported theme '{other}'"),
             None => bail!("invalid theme '{value}'"),
         }
@@ -1214,6 +1232,8 @@ background_color = "#1A1B26"
             theme,
             &serde_json::json!([
                 "system",
+                "terminal",
+                "deepseek-shell",
                 "dark",
                 "light",
                 "grayscale",
@@ -1221,9 +1241,18 @@ background_color = "#1A1B26"
                 "tokyo-night",
                 "dracula",
                 "gruvbox-dark",
-                "matrix"
+                "claude",
+                "matrix",
+                "solarized-light"
             ])
         );
+        let theme_field = &schema["$defs"]["SettingsSection"]["properties"]["theme"];
+        assert_eq!(theme_field["title"], "Theme");
+        let description = theme_field["description"]
+            .as_str()
+            .expect("theme field description");
+        assert!(description.contains("deepseek-shell"));
+        assert!(description.contains("system"));
     }
 
     #[test]

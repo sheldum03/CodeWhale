@@ -132,6 +132,15 @@ struct WebSearchResponse {
 
 pub struct WebSearchTool;
 
+fn web_search_error_text(text: impl Into<String>) -> String {
+    let text = text.into();
+    if crate::palette::ascii_ui_enabled() {
+        text.replace('\u{2014}', "-")
+    } else {
+        text
+    }
+}
+
 #[async_trait]
 impl ToolSpec for WebSearchTool {
     fn name(&self) -> &'static str {
@@ -413,10 +422,10 @@ impl WebSearchTool {
 
         if !status.is_success() {
             let truncated = truncate_error_body(&body);
-            return Err(ToolError::execution_failed(format!(
+            return Err(ToolError::execution_failed(web_search_error_text(format!(
                 "Tavily search failed: HTTP {} — {truncated}",
                 status.as_u16()
-            )));
+            ))));
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
@@ -510,10 +519,10 @@ impl WebSearchTool {
 
         if !status.is_success() {
             let truncated = truncate_error_body(&body);
-            return Err(ToolError::execution_failed(format!(
+            return Err(ToolError::execution_failed(web_search_error_text(format!(
                 "Bocha search failed: HTTP {} — {truncated}",
                 status.as_u16()
-            )));
+            ))));
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
@@ -620,11 +629,17 @@ impl WebSearchTool {
 
         if !status.is_success() {
             let msg = match status.as_u16() {
-                401 | 403 => "Metaso API key rejected — check METASO_API_KEY or set `[search] api_key` in config.toml, or get one at https://metaso.cn/search-api/playground".to_string(),
-                429 => "Metaso rate-limited — wait and retry, or get your own API key at https://metaso.cn/search-api/playground".to_string(),
+                401 | 403 => web_search_error_text(
+                    "Metaso API key rejected — check METASO_API_KEY or set `[search] api_key` in config.toml, or get one at https://metaso.cn/search-api/playground",
+                ),
+                429 => web_search_error_text(
+                    "Metaso rate-limited — wait and retry, or get your own API key at https://metaso.cn/search-api/playground",
+                ),
                 _ => {
                     let truncated = truncate_error_body(&body);
-                    format!("Metaso server error (HTTP {status}) — {truncated}")
+                    web_search_error_text(format!(
+                        "Metaso server error (HTTP {status}) — {truncated}"
+                    ))
                 }
             };
             return Err(ToolError::execution_failed(msg));
@@ -643,8 +658,12 @@ impl WebSearchTool {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
             return Err(ToolError::execution_failed(match code {
-                3003 => "Metaso: daily search limit reached — set METASO_API_KEY or get one at https://metaso.cn/search-api/playground".to_string(),
-                2005 => "Metaso API key rejected — check METASO_API_KEY or set `[search] api_key` in config.toml".to_string(),
+                3003 => web_search_error_text(
+                    "Metaso: daily search limit reached — set METASO_API_KEY or get one at https://metaso.cn/search-api/playground",
+                ),
+                2005 => web_search_error_text(
+                    "Metaso API key rejected — check METASO_API_KEY or set `[search] api_key` in config.toml",
+                ),
                 _ => format!("Metaso API error (code {code}: {msg})"),
             }));
         }
@@ -719,11 +738,18 @@ impl WebSearchTool {
 
         if !status.is_success() {
             let msg = match status.as_u16() {
-                401 | 403 => "Baidu search API key rejected — check BAIDU_SEARCH_API_KEY or `[search] api_key` in config.toml".to_string(),
-                429 => "Baidu search rate-limited — wait and retry, or check your Baidu AI Search quota".to_string(),
+                401 | 403 => web_search_error_text(
+                    "Baidu search API key rejected — check BAIDU_SEARCH_API_KEY or `[search] api_key` in config.toml",
+                ),
+                429 => web_search_error_text(
+                    "Baidu search rate-limited — wait and retry, or check your Baidu AI Search quota",
+                ),
                 _ => {
                     let truncated = truncate_error_body(&body);
-                    format!("Baidu search failed: HTTP {} — {truncated}", status.as_u16())
+                    web_search_error_text(format!(
+                        "Baidu search failed: HTTP {} — {truncated}",
+                        status.as_u16()
+                    ))
                 }
             };
             return Err(ToolError::execution_failed(msg));
@@ -817,11 +843,18 @@ impl WebSearchTool {
 
                     if !status.is_success() {
                         let msg = match status.as_u16() {
-                            401 | 403 => "Volcengine API key rejected — check `[search] api_key` in config.toml or VOLCENGINE_API_KEY / VOLCENGINE_ARK_API_KEY / ARK_API_KEY".to_string(),
-                            429 => "Volcengine API rate-limited — wait and retry, or check your quota".to_string(),
+                            401 | 403 => web_search_error_text(
+                                "Volcengine API key rejected — check `[search] api_key` in config.toml or VOLCENGINE_API_KEY / VOLCENGINE_ARK_API_KEY / ARK_API_KEY",
+                            ),
+                            429 => web_search_error_text(
+                                "Volcengine API rate-limited — wait and retry, or check your quota",
+                            ),
                             _ => {
                                 let truncated = truncate_error_body(&body);
-                                format!("Volcengine search failed: HTTP {} — {truncated}", status.as_u16())
+                                web_search_error_text(format!(
+                                    "Volcengine search failed: HTTP {} — {truncated}",
+                                    status.as_u16()
+                                ))
                             }
                         };
                         return Err(ToolError::execution_failed(msg));
@@ -1441,8 +1474,9 @@ mod tests {
         ERROR_BODY_PREVIEW_BYTES, WebSearchEntry, WebSearchTool, baidu_search_payload,
         decode_html_entities, extract_search_query, is_likely_spam_results, normalize_bing_url,
         optional_search_max_results, parse_baidu_results, root_domain, sanitize_error_body,
-        truncate_error_body, volcengine_extract_text,
+        truncate_error_body, volcengine_extract_text, web_search_error_text,
     };
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use serde_json::json;
 
     // Regression guard: Bing /ck/a redirect hrefs are HTML-entity-encoded
@@ -1710,6 +1744,16 @@ mod tests {
     fn truncate_error_body_keeps_short_body_intact() {
         let body = "short error";
         assert_eq!(truncate_error_body(body), body);
+    }
+
+    #[test]
+    fn web_search_error_text_uses_ascii_separator_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        assert_eq!(
+            web_search_error_text("Baidu search failed — bad token"),
+            "Baidu search failed - bad token"
+        );
     }
 
     #[test]

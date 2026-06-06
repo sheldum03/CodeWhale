@@ -21,6 +21,22 @@ use tokio_util::sync::CancellationToken;
 /// Tool for reading UTF-8 files from the workspace.
 pub struct ReadFileTool;
 
+fn read_file_line_separator() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "|"
+    } else {
+        "\u{2502}"
+    }
+}
+
+fn file_tool_text_separator() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " \u{2014} "
+    }
+}
+
 #[async_trait]
 impl ToolSpec for ReadFileTool {
     fn name(&self) -> &'static str {
@@ -148,9 +164,10 @@ impl ToolSpec for ReadFileTool {
         let shown_last = zero_based_end; // 1-based inclusive line number of the last shown line
 
         let mut numbered = String::new();
+        let line_separator = read_file_line_separator();
         for (offset, line) in lines[zero_based_start..zero_based_end].iter().enumerate() {
             let line_no = start_line + offset;
-            numbered.push_str(&format!("{line_no:>6}│ {line}\n"));
+            numbered.push_str(&format!("{line_no:>6}{line_separator} {line}\n"));
         }
 
         // UTF-8-safe byte truncation of the rendered range.
@@ -661,12 +678,13 @@ impl ToolSpec for EditFileTool {
             )
         } else {
             let fuzz_note = match fuzz_kind {
-                Some("indentation") => " (fuzzy indentation match)",
-                Some("punctuation") => {
-                    " (fuzzy punctuation match — typographic quotes/dashes normalized)"
-                }
-                Some(other) => other,
-                None => "",
+                Some("indentation") => " (fuzzy indentation match)".to_string(),
+                Some("punctuation") => format!(
+                    " (fuzzy punctuation match{}typographic quotes/dashes normalized)",
+                    file_tool_text_separator()
+                ),
+                Some(other) => other.to_string(),
+                None => String::new(),
             };
             format!("Replaced 1 occurrence in {display}{fuzz_note}")
         };
@@ -944,6 +962,7 @@ fn list_dir_timeout(timeout: Duration) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -1107,15 +1126,21 @@ mod tests {
             result.content
         );
         assert!(
-            result.content.contains("     3│ line 3"),
+            result
+                .content
+                .contains(&format!("     3{} line 3", read_file_line_separator())),
             "rendered lines must start at the requested line number"
         );
         assert!(
-            result.content.contains("     6│ line 6"),
+            result
+                .content
+                .contains(&format!("     6{} line 6", read_file_line_separator())),
             "rendered lines must end at the last in-range line"
         );
         assert!(
-            !result.content.contains("     7│ line 7"),
+            !result
+                .content
+                .contains(&format!("     7{} line 7", read_file_line_separator())),
             "lines past max_lines must be excluded"
         );
         assert!(result.content.contains("truncated=\"true\""));
@@ -1171,11 +1196,15 @@ mod tests {
             .expect("execute");
         // Hard cap is 500 lines; line 500 must appear, line 501 must not.
         assert!(
-            result.content.contains("   500│ L500"),
+            result
+                .content
+                .contains(&format!("   500{} L500", read_file_line_separator())),
             "line 500 should be in the window (max_lines clamped to 500)"
         );
         assert!(
-            !result.content.contains("   501│ L501"),
+            !result
+                .content
+                .contains(&format!("   501{} L501", read_file_line_separator())),
             "line 501 must be outside the clamped window"
         );
         assert!(result.content.contains("next_start_line=\"501\""));
@@ -1200,11 +1229,43 @@ mod tests {
         assert!(result.content.contains("<file "));
         assert!(result.content.contains("shown_lines=\"1-200\""));
         assert!(result.content.contains("next_start_line=\"201\""));
-        assert!(result.content.contains("     1│ row 1"));
-        assert!(result.content.contains("   200│ row 200"));
         assert!(
-            !result.content.contains("   201│ row 201"),
+            result
+                .content
+                .contains(&format!("     1{} row 1", read_file_line_separator()))
+        );
+        assert!(
+            result
+                .content
+                .contains(&format!("   200{} row 200", read_file_line_separator()))
+        );
+        assert!(
+            !result
+                .content
+                .contains(&format!("   201{} row 201", read_file_line_separator())),
             "default max_lines=200 must hold"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_numbered_output_uses_ascii_separator_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+        let file = tmp.path().join("ascii.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("write");
+        let tool = ReadFileTool;
+        let result = tool
+            .execute(json!({ "path": "ascii.txt", "start_line": 2, "max_lines": 1 }), &ctx)
+            .await
+            .expect("execute");
+
+        assert!(result.content.contains("     2| two"), "{}", result.content);
+        assert!(
+            !result.content.contains('\u{2502}'),
+            "ASCII UI should not emit the Unicode line-number rail: {}",
+            result.content
         );
     }
 
@@ -1681,6 +1742,45 @@ mod tests {
         );
         let edited = fs::read_to_string(&test_file).expect("read");
         assert_eq!(edited, "let s = \"hello universe\";\n");
+    }
+
+    #[tokio::test]
+    async fn edit_file_punctuation_fuzz_note_uses_ascii_separator_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let tmp = tempdir().expect("tempdir");
+        let ctx = ToolContext::new(tmp.path().to_path_buf());
+
+        let test_file = tmp.path().join("smart.rs");
+        fs::write(&test_file, "let s = \"hello world\";\n").expect("write");
+
+        let tool = EditFileTool;
+        let result = tool
+            .execute(
+                json!({
+                    "path": "smart.rs",
+                    "search": "let s = \u{201C}hello world\u{201D};",
+                    "replace": "let s = \"hello universe\";",
+                    "fuzz": true
+                }),
+                &ctx,
+            )
+            .await
+            .expect("execute");
+
+        assert!(result.success, "fuzzy punctuation edit should succeed");
+        assert!(
+            result
+                .content
+                .contains("fuzzy punctuation match - typographic"),
+            "expected ASCII punctuation-fuzz separator, got: {}",
+            result.content
+        );
+        assert!(
+            !result.content.contains('\u{2014}'),
+            "ASCII mode should not emit an em dash: {}",
+            result.content
+        );
     }
 
     #[tokio::test]

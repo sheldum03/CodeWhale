@@ -38,6 +38,19 @@ impl StepStatus {
     #[allow(dead_code)]
     #[must_use]
     pub fn symbol(&self) -> &'static str {
+        self.symbol_with_ascii(crate::palette::ascii_ui_enabled())
+    }
+
+    #[allow(dead_code)]
+    #[must_use]
+    fn symbol_with_ascii(&self, ascii: bool) -> &'static str {
+        if ascii {
+            return match self {
+                StepStatus::Pending => "o",
+                StepStatus::InProgress => ">",
+                StepStatus::Completed => "+",
+            };
+        }
         match self {
             StepStatus::Pending => "○",
             StepStatus::InProgress => "◎",
@@ -397,10 +410,121 @@ impl ToolSpec for UpdatePlanTool {
         let (pending, in_progress, completed) = state.counts();
         let progress = state.progress_percent();
 
-        let result = serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| "{}".to_string());
-
-        Ok(ToolResult::success(format!(
-            "Plan updated: {pending} pending, {in_progress} in progress, {completed} completed ({progress}% done)\n{result}"
+        Ok(ToolResult::success(format_plan_result(
+            &snapshot,
+            pending,
+            in_progress,
+            completed,
+            progress,
+            crate::palette::ascii_ui_enabled(),
         )))
+    }
+}
+
+fn format_plan_result(
+    snapshot: &PlanSnapshot,
+    pending: usize,
+    in_progress: usize,
+    completed: usize,
+    progress: u8,
+    ascii: bool,
+) -> String {
+    let mut out = format!(
+        "Plan updated: {pending} pending, {in_progress} in progress, {completed} completed ({progress}% done)"
+    );
+
+    if let Some(explanation) = snapshot
+        .explanation
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        out.push_str("\n\nExplanation:\n");
+        out.push_str(explanation.trim());
+    }
+
+    if !snapshot.items.is_empty() {
+        out.push_str("\n\nSteps:");
+        for item in &snapshot.items {
+            out.push_str("\n");
+            out.push_str(item.status.symbol_with_ascii(ascii));
+            out.push(' ');
+            out.push_str(&item.step);
+        }
+    }
+
+    let result = serde_json::to_string_pretty(snapshot).unwrap_or_else(|_| "{}".to_string());
+    out.push_str("\n\nSnapshot:\n");
+    out.push_str(&result);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_plan_result, PlanItemArg, PlanSnapshot, StepStatus};
+
+    #[test]
+    fn step_status_symbols_have_ascii_fallbacks() {
+        assert_eq!(StepStatus::Pending.symbol_with_ascii(true), "o");
+        assert_eq!(StepStatus::InProgress.symbol_with_ascii(true), ">");
+        assert_eq!(StepStatus::Completed.symbol_with_ascii(true), "+");
+        assert_eq!(StepStatus::Pending.symbol_with_ascii(false), "○");
+        assert_eq!(StepStatus::InProgress.symbol_with_ascii(false), "◎");
+        assert_eq!(StepStatus::Completed.symbol_with_ascii(false), "●");
+    }
+
+    #[test]
+    fn plan_result_includes_ascii_status_symbols_and_snapshot() {
+        let snapshot = PlanSnapshot {
+            explanation: Some("Ship the visual refresh safely.".to_string()),
+            items: vec![
+                PlanItemArg {
+                    step: "Audit current theme paths".to_string(),
+                    status: StepStatus::Completed,
+                },
+                PlanItemArg {
+                    step: "Wire remaining fallback paths".to_string(),
+                    status: StepStatus::InProgress,
+                },
+                PlanItemArg {
+                    step: "Dogfood narrow terminal".to_string(),
+                    status: StepStatus::Pending,
+                },
+            ],
+        };
+
+        let rendered = format_plan_result(&snapshot, 1, 1, 1, 33, true);
+
+        assert!(rendered.contains("+ Audit current theme paths"));
+        assert!(rendered.contains("> Wire remaining fallback paths"));
+        assert!(rendered.contains("o Dogfood narrow terminal"));
+        assert!(rendered.contains("\"status\": \"completed\""));
+        assert!(rendered.is_ascii());
+    }
+
+    #[test]
+    fn plan_result_includes_unicode_status_symbols() {
+        let snapshot = PlanSnapshot {
+            explanation: None,
+            items: vec![
+                PlanItemArg {
+                    step: "Audit".to_string(),
+                    status: StepStatus::Pending,
+                },
+                PlanItemArg {
+                    step: "Implement".to_string(),
+                    status: StepStatus::InProgress,
+                },
+                PlanItemArg {
+                    step: "Verify".to_string(),
+                    status: StepStatus::Completed,
+                },
+            ],
+        };
+
+        let rendered = format_plan_result(&snapshot, 1, 1, 1, 33, false);
+
+        assert!(rendered.contains("○ Audit"));
+        assert!(rendered.contains("◎ Implement"));
+        assert!(rendered.contains("● Verify"));
     }
 }

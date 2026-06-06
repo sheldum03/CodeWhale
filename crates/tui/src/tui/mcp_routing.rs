@@ -92,11 +92,14 @@ pub(super) fn open_mcp_manager_pager(app: &mut App, snapshot: &McpManagerSnapsho
         .map(|area| area.width)
         .unwrap_or(100)
         .saturating_sub(4);
-    app.view_stack.push(PagerView::from_text(
-        "MCP Manager".to_string(),
-        &format_mcp_manager(snapshot),
-        width.max(60),
-    ));
+    app.view_stack.push(
+        PagerView::from_text(
+            "MCP Manager".to_string(),
+            &format_mcp_manager(snapshot),
+            width.max(60),
+        )
+        .with_ui_theme(app.ui_theme),
+    );
 }
 
 pub(super) fn add_mcp_message(app: &mut App, content: String) {

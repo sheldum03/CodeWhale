@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::CommandResult;
+use super::{CommandResult, command_bullet, command_text_separator};
 use crate::client::DeepSeekClient;
 use crate::config::{
     ApiProvider, COMMON_DEEPSEEK_MODELS, Config, DEFAULT_XIAOMI_MIMO_BASE_URL,
@@ -153,9 +153,7 @@ fn show_single_setting(app: &App, key: &str) -> CommandResult {
             Some(config.deepseek_base_url())
         }
         "locale" | "language" => Some(locale_display(app.ui_locale).to_string()),
-        "theme" | "ui_theme" => {
-            Some(crate::palette::theme_label_for_mode(app.ui_theme.mode).to_string())
-        }
+        "theme" | "ui_theme" => Some(app.theme_id.name().to_string()),
         "background_color" | "background" | "bg" => {
             crate::palette::hex_rgb_string(app.ui_theme.surface_bg)
                 .or_else(|| Some("(default)".to_string()))
@@ -795,6 +793,7 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
                 &settings.theme,
                 settings.background_color.as_deref(),
             );
+            app.streaming_state.set_ui_theme(app.ui_theme);
             app.needs_redraw = true;
         }
         "cost_currency" | "currency" => {
@@ -920,10 +919,10 @@ pub fn set_config_value(app: &mut App, key: &str, value: &str, persist: bool) ->
         format!("{key} = {display_value} (session only, add --save to persist)")
     };
 
-    CommandResult {
-        message: Some(message),
-        action,
-        is_error: false,
+    if let Some(action) = action {
+        CommandResult::with_message_and_action(message, action)
+    } else {
+        CommandResult::message(message)
     }
 }
 
@@ -1046,11 +1045,12 @@ pub fn slop(_app: &mut App, arg: Option<&str>) -> CommandResult {
                 use std::fmt::Write;
                 let _ = writeln!(
                     out,
-                    "[{}] {} ({:?} | {:?}) — {}",
+                    "[{}] {} ({:?} | {:?}){}{}",
                     crate::slop_ledger::short_id(&entry.id),
                     entry.bucket.as_str(),
                     entry.severity,
                     entry.status,
+                    command_text_separator(),
                     entry.title
                 );
             }
@@ -1086,10 +1086,11 @@ pub fn trust(app: &mut App, arg: Option<&str>) -> CommandResult {
         "" | "status" | "list" => trust_status(&workspace, app, sub == "list"),
         "on" | "enable" | "yes" | "y" => {
             app.trust_mode = true;
-            CommandResult::message(
-                "Workspace trust mode enabled — agent file tools can now read/write any path. \
+            CommandResult::message(format!(
+                "Workspace trust mode enabled{}agent file tools can now read/write any path. \
                  Use `/trust off` to revert; prefer `/trust add <path>` for a narrower opt-in.",
-            )
+                command_text_separator()
+            ))
         }
         "off" | "disable" | "no" | "n" => {
             app.trust_mode = false;
@@ -1126,7 +1127,7 @@ fn trust_status(workspace: &Path, app: &App, force_paths: bool) -> CommandResult
     } else {
         lines.push(format!("Trusted external paths ({}):", trust.paths().len()));
         for path in trust.paths() {
-            lines.push(format!("  • {}", path.display()));
+            lines.push(format!("  {} {}", command_bullet(), path.display()));
         }
     }
     CommandResult::message(lines.join("\n"))
@@ -1141,8 +1142,9 @@ fn trust_add(workspace: &Path, raw: &str) -> CommandResult {
     let path = PathBuf::from(expand_tilde(raw));
     if !path.exists() {
         return CommandResult::error(format!(
-            "Path not found: {} — supply an existing directory or file.",
-            path.display()
+            "Path not found: {}{}supply an existing directory or file.",
+            path.display(),
+            command_text_separator()
         ));
     }
     match crate::workspace_trust::add(workspace, &path) {
@@ -1586,9 +1588,10 @@ pub fn lsp_command(app: &mut App, arg: Option<&str>) -> CommandResult {
         }
         "on" | "enable" | "1" | "true" => {
             app.lsp_enabled = true;
-            CommandResult::message(
-                "LSP diagnostics enabled — file edit results will include compiler errors and warnings when available.",
-            )
+            CommandResult::message(format!(
+                "LSP diagnostics enabled{}file edit results will include compiler errors and warnings when available.",
+                command_text_separator()
+            ))
         }
         "off" | "disable" | "0" | "false" => {
             app.lsp_enabled = false;
@@ -1848,6 +1851,22 @@ mod tests {
         let msg = result.message.unwrap();
         assert!(msg.contains("model = deepseek-v4-flash"));
         assert_eq!(app.model, "deepseek-v4-flash");
+        assert!(matches!(
+            result.action,
+            Some(AppAction::UpdateCompaction(_))
+        ));
+    }
+
+    #[test]
+    fn set_config_value_preserves_late_update_compaction_action() {
+        let mut app = create_test_app();
+
+        let result = set_config_value(&mut app, "default_model", "deepseek-v4-pro", false);
+
+        assert_eq!(
+            result.message.as_deref(),
+            Some("default_model = deepseek-v4-pro (session only, add --save to persist)")
+        );
         assert!(matches!(
             result.action,
             Some(AppAction::UpdateCompaction(_))
@@ -2430,6 +2449,119 @@ mod tests {
     }
 
     #[test]
+    fn theme_command_accepts_deepseek_shell_arg() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-theme-command-deepseek-shell-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        let result = theme(&mut app, Some("deepseek-shell"));
+
+        assert_eq!(result.message.unwrap(), "theme = deepseek-shell (saved)");
+        assert_eq!(app.theme_id, crate::palette::ThemeId::DeepSeekShell);
+        assert_eq!(app.ui_theme, crate::palette::DEEPSEEK_SHELL_UI_THEME);
+        assert!(app.needs_redraw);
+    }
+
+    #[test]
+    fn theme_command_updates_existing_streaming_render_theme() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-theme-command-streaming-theme-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        app.streaming_state.start_thinking(0, None);
+        let result = theme(&mut app, Some("deepseek-shell"));
+        app.streaming_state.push_content(0, "thinking with active theme\n");
+
+        let lines = app.streaming_state.commit_lines(0);
+
+        assert_eq!(result.message.unwrap(), "theme = deepseek-shell (saved)");
+        assert_eq!(app.theme_id, crate::palette::ThemeId::DeepSeekShell);
+        assert_eq!(
+            app.transcript_render_options().theme.variant,
+            crate::deepseek_theme::Variant::DeepSeekShell
+        );
+        assert_eq!(
+            lines[0].spans[0].style.fg,
+            Some(app.ui_theme.status_warning)
+        );
+    }
+
+    #[test]
+    fn theme_command_persists_deepseek_shell_alias_as_canonical_name() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-theme-command-deepseek-shell-alias-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        let result = theme(&mut app, Some("ds-shell"));
+
+        assert_eq!(result.message.unwrap(), "theme = deepseek-shell (saved)");
+        assert_eq!(app.theme_id, crate::palette::ThemeId::DeepSeekShell);
+
+        let settings_path = Settings::path().unwrap();
+        let saved = fs::read_to_string(settings_path).unwrap();
+        assert!(saved.contains("theme = \"deepseek-shell\""));
+        assert!(!saved.contains("theme = \"ds-shell\""));
+    }
+
+    #[test]
+    fn theme_command_preserves_background_color_overlay() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-theme-background-overlay-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir_all(&temp_root).unwrap();
+        let _guard = EnvGuard::new(&temp_root);
+
+        let mut app = create_test_app();
+        let background = ratatui::style::Color::Rgb(1, 2, 3);
+        let result = set_config(&mut app, Some("background_color #010203 --save"));
+        assert_eq!(
+            result.message.unwrap(),
+            "background_color = #010203 (saved)"
+        );
+
+        let result = theme(&mut app, Some("deepseek-shell"));
+
+        assert_eq!(result.message.unwrap(), "theme = deepseek-shell (saved)");
+        assert_eq!(app.theme_id, crate::palette::ThemeId::DeepSeekShell);
+        assert_eq!(app.ui_theme.surface_bg, background);
+        assert_eq!(app.ui_theme.header_bg, background);
+        assert_eq!(app.ui_theme.footer_bg, background);
+    }
+
+    #[test]
     fn set_theme_save_updates_live_app_and_persists() {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2523,6 +2655,34 @@ mod tests {
         let result = trust(&mut app, None);
         let msg = result.message.expect("status message");
         assert!(msg.contains("Workspace trust mode"));
+    }
+
+    #[test]
+    fn trust_list_uses_ascii_bullet_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = crate::test_support::EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_root = env::temp_dir().join(format!(
+            "codewhale-tui-trust-list-ascii-test-{}-{}",
+            std::process::id(),
+            nanos
+        ));
+        let trusted = temp_root.join("trusted");
+        fs::create_dir_all(&trusted).unwrap();
+
+        let mut app = create_test_app();
+        app.workspace = temp_root;
+        let add = trust(&mut app, Some(&format!("add {}", trusted.display())));
+        assert!(!add.is_error, "got: {:?}", add.message);
+
+        let result = trust(&mut app, Some("list"));
+        let msg = result.message.expect("status message");
+
+        assert!(msg.contains("  - "), "got {msg}");
+        assert!(!msg.contains('\u{2022}'), "got {msg}");
     }
 
     #[test]

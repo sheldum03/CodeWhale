@@ -24,6 +24,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
+use crate::deepseek_theme::Theme;
 use crate::tui::app::TranscriptSpacing;
 use crate::tui::history::{HistoryCell, TranscriptRenderOptions};
 use crate::tui::scrolling::TranscriptLineMeta;
@@ -263,15 +264,15 @@ impl TranscriptViewCache {
         } else {
             first_dirty.unwrap_or(0).saturating_sub(1)
         };
-        self.flatten_from(options.spacing, rebuild_from);
+        self.flatten_from(options.spacing, options.theme, rebuild_from);
     }
 
     /// Reassemble flat `lines` / `line_meta` from `per_cell` plus spacers.
-    fn flatten(&mut self, spacing: TranscriptSpacing) {
+    fn flatten(&mut self, spacing: TranscriptSpacing, theme: Theme) {
         self.lines.clear();
         self.line_meta.clear();
         self.rail_prefix_widths.clear();
-        self.append_flattened_cells(spacing, 0);
+        self.append_flattened_cells(spacing, theme, 0);
     }
 
     /// Reassemble only the suffix starting at `first_cell`.
@@ -279,9 +280,9 @@ impl TranscriptViewCache {
     /// Streaming usually mutates the active tail cell. Rebuilding from the
     /// previous cell preserves spacer correctness while avoiding a full
     /// O(total transcript lines) flatten on every token chunk.
-    fn flatten_from(&mut self, spacing: TranscriptSpacing, first_cell: usize) {
+    fn flatten_from(&mut self, spacing: TranscriptSpacing, theme: Theme, first_cell: usize) {
         if first_cell == 0 || self.lines.is_empty() || self.line_meta.is_empty() {
-            self.flatten(spacing);
+            self.flatten(spacing, theme);
             return;
         }
 
@@ -296,10 +297,15 @@ impl TranscriptViewCache {
         self.lines.truncate(truncate_at);
         self.line_meta.truncate(truncate_at);
         self.rail_prefix_widths.truncate(truncate_at);
-        self.append_flattened_cells(spacing, first_cell);
+        self.append_flattened_cells(spacing, theme, first_cell);
     }
 
-    fn append_flattened_cells(&mut self, spacing: TranscriptSpacing, start_cell: usize) {
+    fn append_flattened_cells(
+        &mut self,
+        spacing: TranscriptSpacing,
+        theme: Theme,
+        start_cell: usize,
+    ) {
         for (cell_index, cached) in self.per_cell.iter().enumerate().skip(start_cell) {
             if cached.is_empty {
                 continue;
@@ -318,6 +324,7 @@ impl TranscriptViewCache {
                         rendered_line_count,
                     ),
                     usize::from(self.width),
+                    theme,
                 );
                 self.rail_prefix_widths
                     .push(compute_rail_prefix_width(&final_line));
@@ -448,6 +455,7 @@ fn line_with_group_rail(
     line: &Line<'static>,
     rail: Option<crate::tui::widgets::tool_card::CardRail>,
     max_width: usize,
+    theme: Theme,
 ) -> Line<'static> {
     let Some(rail) = rail else {
         return line.clone();
@@ -463,7 +471,7 @@ fn line_with_group_rail(
     let mut spans = Vec::with_capacity(rendered.spans.len() + 1);
     spans.push(Span::styled(
         format!("{glyph} "),
-        Style::default().fg(crate::palette::TEXT_DIM),
+        Style::default().fg(theme.text_dim_color),
     ));
     spans.extend(rendered.spans);
     rendered.spans = truncate_spans_to_width(spans, max_width);
@@ -633,9 +641,17 @@ mod tests {
         cache.ensure(&cells, &revisions, 40, TranscriptRenderOptions::default());
 
         let lines = cache.lines();
-        assert_eq!(lines[0].style.bg, Some(palette::SURFACE_ELEVATED));
+        assert_eq!(lines[0].style.bg, Some(palette::USER_MESSAGE_BG));
         assert_eq!(lines[0].width(), 40);
-        assert_eq!(plain_lines(&cache)[0].trim_end(), "▎ # literal user prompt");
+        let expected_glyph = if palette::ascii_ui_enabled() {
+            ">"
+        } else {
+            "\u{258E}"
+        };
+        assert_eq!(
+            plain_lines(&cache)[0].trim_end(),
+            format!("{expected_glyph} # literal user prompt")
+        );
     }
 
     #[test]
@@ -690,6 +706,31 @@ mod tests {
             })
             .collect();
         assert_eq!(snapshot_per_cell, snapshot_per_cell_2);
+    }
+
+    #[test]
+    fn cache_invalidates_when_render_theme_changes() {
+        let cells = vec![user_cell("hello")];
+        let revisions = vec![1u64];
+        let mut cache = TranscriptViewCache::new();
+        cache.ensure(&cells, &revisions, 40, TranscriptRenderOptions::default());
+        assert_eq!(cache.lines()[0].style.bg, Some(palette::USER_MESSAGE_BG));
+
+        let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        ui_theme.elevated_bg = ratatui::style::Color::Indexed(18);
+        let options = TranscriptRenderOptions {
+            theme: crate::deepseek_theme::Theme::from_ui_theme(
+                palette::ThemeId::DeepSeekShell,
+                ui_theme,
+            ),
+            ..TranscriptRenderOptions::default()
+        };
+        cache.ensure(&cells, &revisions, 40, options);
+
+        assert_eq!(
+            cache.lines()[0].style.bg,
+            Some(ratatui::style::Color::Indexed(18))
+        );
     }
 
     #[test]
@@ -961,6 +1002,33 @@ mod tests {
         assert!(
             !lines.iter().any(String::is_empty),
             "adjacent tool cells should not be separated by blank spacer rows: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn tool_group_rail_uses_render_options_theme() {
+        let cells = vec![exec_tool_cell("cargo test"), exec_tool_cell("cargo clippy")];
+        let revisions = vec![1u64, 1];
+        let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        ui_theme.text_dim = ratatui::style::Color::Indexed(42);
+        let options = TranscriptRenderOptions {
+            theme: crate::deepseek_theme::Theme::from_ui_theme(
+                palette::ThemeId::DeepSeekShell,
+                ui_theme,
+            ),
+            ..TranscriptRenderOptions::default()
+        };
+        let mut cache = TranscriptViewCache::new();
+
+        cache.ensure(&cells, &revisions, 80, options);
+
+        let rail_span = cache.lines()[0]
+            .spans
+            .first()
+            .expect("tool group rail span");
+        assert_eq!(
+            rail_span.style.fg,
+            Some(ratatui::style::Color::Indexed(42))
         );
     }
 

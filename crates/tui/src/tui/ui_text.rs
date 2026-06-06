@@ -3,7 +3,7 @@
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::tui::history::HistoryCell;
+use crate::tui::history::{HistoryCell, TranscriptRenderOptions};
 use crate::tui::osc8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,8 +142,12 @@ fn gh_command_label(command: &str) -> Option<String> {
     None
 }
 
-pub(super) fn history_cell_to_text(cell: &HistoryCell, width: u16) -> String {
-    cell.transcript_lines(width)
+pub(super) fn history_cell_to_text_with_options(
+    cell: &HistoryCell,
+    width: u16,
+    options: TranscriptRenderOptions,
+) -> String {
+    cell.transcript_lines_with_options(width, options)
         .into_iter()
         .map(line_to_string)
         .collect::<Vec<_>>()

@@ -106,7 +106,9 @@ use crate::tui::tool_routing::exploring_label;
 use crate::tui::tool_routing::{
     handle_tool_call_complete, handle_tool_call_started, maybe_add_patch_preview,
 };
-use crate::tui::ui_text::{history_cell_to_text, line_to_plain, truncate_line_to_width};
+use crate::tui::ui_text::{
+    history_cell_to_text_with_options, line_to_plain, truncate_line_to_width,
+};
 use crate::tui::user_input::UserInputView;
 use crate::tui::views::subagent_view_agents;
 use crate::tui::vim_mode;
@@ -133,6 +135,94 @@ use super::slash_menu::{
 use super::views::{ConfigView, HelpView, ModalKind, ShellControlView, ViewEvent};
 use super::widgets::pending_input_preview::{ContextPreviewItem, PendingInputPreview};
 use super::widgets::{ChatWidget, ComposerWidget, HeaderData, HeaderWidget, Renderable};
+
+fn ui_clause_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " \u{2014} "
+    }
+}
+
+fn ui_ellipsis() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn ui_done_marker() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "+"
+    } else {
+        "\u{2713}"
+    }
+}
+
+fn ui_up_edit_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Up to edit"
+    } else {
+        "\u{2191} to edit"
+    }
+}
+
+fn ui_up_down_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Up/Down"
+    } else {
+        "\u{2191}/\u{2193}"
+    }
+}
+
+fn ui_left_right_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Left/Right"
+    } else {
+        "\u{2190}/\u{2192}"
+    }
+}
+
+fn ui_change_arrow() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "->"
+    } else {
+        "\u{2192}"
+    }
+}
+
+fn ui_status_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " | "
+    } else {
+        " \u{00B7} "
+    }
+}
+
+fn ui_warning_prefix() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Warning"
+    } else {
+        "\u{26A0}"
+    }
+}
+
+fn ui_vertical_bar_char() -> char {
+    if palette::ascii_ui_enabled() {
+        '|'
+    } else {
+        '\u{2502}'
+    }
+}
+
+fn ui_spillover_title() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-- Full output (spillover) --"
+    } else {
+        "\u{2500}\u{2500} Full output (spillover) \u{2500}\u{2500}"
+    }
+}
 
 // === Constants ===
 
@@ -464,8 +554,10 @@ pub async fn run_tui(config: &Config, options: TuiOptions) -> Result<()> {
                     }
                     if app.status_message.is_none() && app.queued_message_count() > 0 {
                         app.status_message = Some(format!(
-                            "Restored {} queued message(s) from previous session — ↑ to edit, Ctrl+X to discard",
-                            app.queued_message_count()
+                            "Restored {} queued message(s) from previous session{}{}, Ctrl+X to discard",
+                            app.queued_message_count(),
+                            ui_clause_separator(),
+                            ui_up_edit_hint()
                         ));
                     }
                 } else {
@@ -1836,23 +1928,33 @@ async fn run_event_loop(
                             {
                                 let short = gate_msg.lines().nth(4).unwrap_or("review before done");
                                 app.push_status_toast(
-                                    format!("⚠️ SlopLedger: {short}"),
+                                    format!("{} SlopLedger: {short}", ui_warning_prefix()),
                                     crate::tui::app::StatusToastLevel::Warning,
                                     Some(12_000),
                                 );
                             }
 
                             let tool_count = app.tool_evidence.len();
-                            let mut receipt = "✓ turn completed".to_string();
+                            let mut receipt =
+                                format!("{} turn completed", ui_done_marker());
                             if tool_count > 0 {
-                                let _ = write!(receipt, " · {tool_count} tool(s) used");
+                                let _ = write!(
+                                    receipt,
+                                    "{}{tool_count} tool(s) used",
+                                    crate::tui::widgets::footer_separator()
+                                );
                                 for evidence in &app.tool_evidence {
                                     let summary = crate::utils::truncate_with_ellipsis(
                                         &evidence.summary,
                                         60,
-                                        "…",
+                                        ui_ellipsis(),
                                     );
-                                    let _ = write!(receipt, " · {}: {summary}", evidence.tool_name);
+                                    let _ = write!(
+                                        receipt,
+                                        "{}{}: {summary}",
+                                        crate::tui::widgets::footer_separator(),
+                                        evidence.tool_name
+                                    );
                                 }
                             }
                             app.set_receipt_text(receipt.clone());
@@ -1912,7 +2014,8 @@ async fn run_event_loop(
                             });
                             if app.view_stack.top_kind() != Some(ModalKind::PlanPrompt) {
                                 let plan = Some(app.plan_state.lock().await.snapshot());
-                                app.view_stack.push(PlanPromptView::new(plan));
+                                app.view_stack
+                                    .push(PlanPromptView::new(plan).with_ui_theme(app.ui_theme));
                             }
                         }
                         app.plan_tool_used_in_turn = false;
@@ -2281,7 +2384,9 @@ async fn run_event_loop(
                         }
                     }
                     EngineEvent::UserInputRequired { id, request } => {
-                        app.view_stack.push(UserInputView::new(id.clone(), request));
+                        app.view_stack.push(
+                            UserInputView::new(id.clone(), request).with_ui_theme(app.ui_theme),
+                        );
                         if let Some((method, _, _)) = crate::tui::notifications::settings(config) {
                             let in_tmux = std::env::var("TMUX").is_ok_and(|v| !v.is_empty());
                             crate::tui::notifications::notify_done(
@@ -2346,7 +2451,8 @@ async fn run_event_loop(
                                 blocked_network,
                                 blocked_write,
                             );
-                            app.view_stack.push(ElevationView::new(request));
+                            app.view_stack
+                                .push(ElevationView::new(request).with_ui_theme(app.ui_theme));
                             if let Some((method, _, _)) =
                                 crate::tui::notifications::settings(config)
                             {
@@ -2509,6 +2615,7 @@ async fn run_event_loop(
         // and forces Smooth-only chunking so the display stays calm.
         frame_rate_limiter.set_low_motion(app.low_motion);
         app.streaming_state.set_low_motion(app.low_motion);
+        app.streaming_state.set_ui_theme(app.ui_theme);
 
         let draw_wait = if app.needs_redraw {
             frame_rate_limiter.time_until_next_draw(now)
@@ -2977,7 +3084,9 @@ async fn run_event_loop(
                 if app.view_stack.top_kind() == Some(ModalKind::Help) {
                     app.view_stack.pop();
                 } else {
-                    app.view_stack.push(HelpView::new_for_locale(app.ui_locale));
+                    app.view_stack.push(
+                        HelpView::new_for_locale(app.ui_locale).with_ui_theme(app.ui_theme),
+                    );
                 }
                 continue;
             }
@@ -2986,7 +3095,9 @@ async fn run_event_loop(
                 if app.view_stack.top_kind() == Some(ModalKind::Help) {
                     app.view_stack.pop();
                 } else {
-                    app.view_stack.push(HelpView::new_for_locale(app.ui_locale));
+                    app.view_stack.push(
+                        HelpView::new_for_locale(app.ui_locale).with_ui_theme(app.ui_theme),
+                    );
                 }
                 continue;
             }
@@ -3013,13 +3124,16 @@ async fn run_event_loop(
                     continue;
                 }
                 app.view_stack
-                    .push(CommandPaletteView::new(build_command_palette_entries(
-                        app.ui_locale,
-                        &app.skills_dir,
-                        &app.workspace,
-                        &app.mcp_config_path,
-                        app.mcp_snapshot.as_ref(),
-                    )));
+                    .push(
+                        CommandPaletteView::new(build_command_palette_entries(
+                            app.ui_locale,
+                            &app.skills_dir,
+                            &app.workspace,
+                            &app.mcp_config_path,
+                            app.mcp_snapshot.as_ref(),
+                        ))
+                        .with_ui_theme(app.ui_theme),
+                    );
                 continue;
             }
 
@@ -3066,10 +3180,10 @@ async fn run_event_loop(
                     // Build the file tree from the current workspace.
                     let state = crate::tui::file_tree::FileTreeState::new(&app.workspace);
                     app.file_tree = Some(state);
-                    app.status_message = Some(
-                        "File tree: \u{2191}/\u{2193} navigate  Enter select  Esc close"
-                            .to_string(),
-                    );
+                    app.status_message = Some(format!(
+                        "File tree: {} navigate  Enter select  Esc close",
+                        ui_up_down_hint()
+                    ));
                 }
                 app.needs_redraw = true;
                 continue;
@@ -3354,7 +3468,9 @@ async fn run_event_loop(
                     // never restores a different project's history by
                     // surprise (#1395). Press `a` inside the picker to
                     // broaden to every saved session.
-                    app.view_stack.push(SessionPickerView::new(&app.workspace));
+                    app.view_stack.push(
+                        SessionPickerView::new(&app.workspace).with_ui_theme(app.ui_theme),
+                    );
                     continue;
                 }
                 KeyCode::Char('c') | KeyCode::Char('C')
@@ -3660,7 +3776,9 @@ async fn run_event_loop(
                         && !slash_menu_open =>
                 {
                     if app.view_stack.top_kind() != Some(ModalKind::Help) {
-                        app.view_stack.push(HelpView::new_for_locale(app.ui_locale));
+                        app.view_stack.push(
+                            HelpView::new_for_locale(app.ui_locale).with_ui_theme(app.ui_theme),
+                        );
                     }
                     continue;
                 }
@@ -4032,7 +4150,10 @@ async fn run_event_loop(
                     crate::composer_stash::push_stash(&app.input);
                     app.clear_input_recoverable();
                     app.push_status_toast(
-                        "Draft stashed — `/stash pop` to restore",
+                        format!(
+                            "Draft stashed{}`/stash pop` to restore",
+                            ui_clause_separator()
+                        ),
                         StatusToastLevel::Info,
                         Some(3_000),
                     );
@@ -4342,7 +4463,10 @@ fn reconcile_turn_liveness(app: &mut App, now: Instant, has_running_agents: bool
         // Per-turn scroll lock — clear so the next turn auto-scrolls.
         app.user_scrolled_during_stream = false;
         app.push_status_toast(
-            "Turn stalled — no completion signal received. Please try again.",
+            format!(
+                "Turn stalled{}no completion signal received. Please try again.",
+                ui_clause_separator()
+            ),
             StatusToastLevel::Error,
             None,
         );
@@ -4764,8 +4888,10 @@ fn queue_current_draft_for_next_turn(app: &mut App) -> bool {
     };
     app.queue_message(queued);
     app.status_message = Some(format!(
-        "{} queued — ↑ to edit, /queue list",
-        app.queued_message_count()
+        "{} queued{}{}, /queue list",
+        app.queued_message_count(),
+        ui_clause_separator(),
+        ui_up_edit_hint()
     ));
     true
 }
@@ -5152,7 +5278,8 @@ async fn apply_model_picker_choice(
     let effort_changed = effort != previous_effort;
     if !model_changed && !effort_changed {
         app.status_message = Some(format!(
-            "Model unchanged: {model} · thinking {}",
+            "Model unchanged: {model}{}thinking {}",
+            ui_status_separator(),
             effort.short_label()
         ));
         return;
@@ -5213,13 +5340,22 @@ async fn apply_model_picker_choice(
 
     let mut summary = match (model_changed, effort_changed) {
         (true, true) => format!(
-            "Model: {previous_model} → {model_summary} · thinking: {previous_effort_summary} → {effort_summary}"
+            "Model: {previous_model} {} {model_summary}{}thinking: {previous_effort_summary} {} {effort_summary}",
+            ui_change_arrow(),
+            ui_status_separator(),
+            ui_change_arrow()
         ),
         (true, false) => {
-            format!("Model: {previous_model} → {model_summary} · thinking {effort_summary}")
+            format!(
+                "Model: {previous_model} {} {model_summary}{}thinking {effort_summary}",
+                ui_change_arrow(),
+                ui_status_separator()
+            )
         }
         (false, true) => format!(
-            "Thinking: {previous_effort_summary} → {effort_summary} · model {model_summary}"
+            "Thinking: {previous_effort_summary} {} {effort_summary}{}model {model_summary}",
+            ui_change_arrow(),
+            ui_status_separator()
         ),
         (false, false) => unreachable!(),
     };
@@ -5255,9 +5391,11 @@ async fn apply_picker_effort_choice(
     apply_model_and_compaction_update(engine_handle, app.compaction_config(), app.mode).await;
 
     let mut summary = format!(
-        "Thinking: {} → {} · model {}",
+        "Thinking: {} {} {}{}model {}",
         previous_effort.short_label(),
+        ui_change_arrow(),
         effort.short_label(),
+        ui_status_separator(),
         app.model_display_label()
     );
     if let Some(warning) = persist_warning {
@@ -5382,12 +5520,18 @@ async fn switch_provider(
     .map(|err| format!("Provider selection was not fully persisted: {err}"));
 
     let mut switch_summary = format!(
-        "Provider switched: {} → {}",
+        "Provider switched: {} {} {}",
         previous_provider.as_str(),
+        ui_change_arrow(),
         target.as_str(),
     );
     switch_summary.push(char::from(10));
-    switch_summary.push_str(&format!("Model: {} → {}", previous_model, new_model));
+    switch_summary.push_str(&format!(
+        "Model: {} {} {}",
+        previous_model,
+        ui_change_arrow(),
+        new_model
+    ));
     switch_summary.push(char::from(10));
     switch_summary.push_str(&format!("Endpoint: {}", new_endpoint));
     if let Some(ref warning) = persist_warning {
@@ -5456,7 +5600,8 @@ fn open_text_pager(app: &mut App, title: String, content: String) {
         title,
         &content,
         width.saturating_sub(2),
-    ));
+    )
+    .with_ui_theme(app.ui_theme));
 }
 
 pub(crate) fn open_context_inspector(app: &mut App) {
@@ -5470,7 +5615,8 @@ pub(crate) fn open_context_inspector(app: &mut App) {
         tr(app.ui_locale, MessageId::CtxInspTitle),
         &content,
         width.saturating_sub(2),
-    ));
+    )
+    .with_ui_theme(app.ui_theme));
 }
 
 // File-picker relevance scoring moved to `tui/file_picker_relevance.rs`.
@@ -5715,40 +5861,48 @@ async fn apply_command_result(
             }
             AppAction::OpenModelPicker => {
                 if app.view_stack.top_kind() != Some(ModalKind::ModelPicker) {
-                    app.view_stack
-                        .push(crate::tui::model_picker::ModelPickerView::new(app));
+                    app.view_stack.push(
+                        crate::tui::model_picker::ModelPickerView::new(app)
+                            .with_ui_theme(app.ui_theme),
+                    );
                 }
             }
             AppAction::OpenProviderPicker => {
                 if app.view_stack.top_kind() != Some(ModalKind::ProviderPicker) {
-                    app.view_stack
-                        .push(crate::tui::provider_picker::ProviderPickerView::new(
+                    app.view_stack.push(
+                        crate::tui::provider_picker::ProviderPickerView::new(
                             app.api_provider,
                             config,
-                        ));
+                        )
+                        .with_ui_theme(app.ui_theme),
+                    );
                 }
             }
             AppAction::OpenModePicker => {
                 if app.view_stack.top_kind() != Some(ModalKind::ModePicker) {
-                    app.view_stack
-                        .push(crate::tui::views::mode_picker::ModePickerView::new(
-                            app.mode,
-                        ));
+                    app.view_stack.push(
+                        crate::tui::views::mode_picker::ModePickerView::new(app.mode)
+                            .with_ui_theme(app.ui_theme),
+                    );
                 }
             }
             AppAction::OpenStatusPicker => {
                 if app.view_stack.top_kind() != Some(ModalKind::StatusPicker) {
-                    app.view_stack
-                        .push(crate::tui::views::status_picker::StatusPickerView::new(
+                    app.view_stack.push(
+                        crate::tui::views::status_picker::StatusPickerView::new(
                             &app.status_items,
                             app.api_provider,
-                        ));
+                        )
+                        .with_ui_theme(app.ui_theme),
+                    );
                 }
             }
             AppAction::OpenFeedbackPicker => {
                 if app.view_stack.top_kind() != Some(ModalKind::FeedbackPicker) {
-                    app.view_stack
-                        .push(crate::tui::feedback_picker::FeedbackPickerView::new());
+                    app.view_stack.push(
+                        crate::tui::feedback_picker::FeedbackPickerView::new()
+                            .with_ui_theme(app.ui_theme),
+                    );
                 }
             }
             AppAction::OpenThemePicker => {
@@ -5758,8 +5912,12 @@ async fn apply_command_result(
                     // Avoids re-reading settings.toml from disk on every
                     // `/theme` invocation.
                     let original = app.theme_id.name().to_string();
-                    app.view_stack
-                        .push(crate::tui::theme_picker::ThemePickerView::new(original));
+                    app.view_stack.push(
+                        crate::tui::theme_picker::ThemePickerView::new_with_ui_theme(
+                            original,
+                            app.ui_theme,
+                        ),
+                    );
                 }
             }
             AppAction::OpenExternalUrl { url, label } => match open_external_url(&url) {
@@ -6280,9 +6438,11 @@ async fn queue_follow_up(app: &mut App, message: QueuedMessage) -> Result<()> {
     let display = message.display.clone();
     app.queue_message(message);
     app.status_message = Some(format!(
-        "Queued: {} ({} total) — ↑ to edit",
+        "Queued: {} ({} total){}{}",
         display,
-        app.queued_message_count()
+        app.queued_message_count(),
+        ui_clause_separator(),
+        ui_up_edit_hint()
     ));
     Ok(())
 }
@@ -6302,9 +6462,17 @@ async fn submit_or_steer_message(
             app.queue_message(message);
             if app.offline_mode {
                 app.status_message =
-                    Some(format!("Offline: {count} queued — ↑ to edit, /queue list"));
+                    Some(format!(
+                        "Offline: {count} queued{}{}, /queue list",
+                        ui_clause_separator(),
+                        ui_up_edit_hint()
+                    ));
             } else {
-                app.status_message = Some(format!("{count} queued — ↑ to edit, /queue list"));
+                app.status_message = Some(format!(
+                    "{count} queued{}{}, /queue list",
+                    ui_clause_separator(),
+                    ui_up_edit_hint()
+                ));
             }
             Ok(())
         }
@@ -6314,8 +6482,10 @@ async fn submit_or_steer_message(
             if let Err(err) = steer_user_message(app, engine_handle, message.clone()).await {
                 app.queue_message(message);
                 app.status_message = Some(format!(
-                    "Steer failed ({err}); {} queued — ↑ to edit, /queue list",
-                    app.queued_message_count()
+                    "Steer failed ({err}); {} queued{}{}, /queue list",
+                    app.queued_message_count(),
+                    ui_clause_separator(),
+                    ui_up_edit_hint()
                 ));
             } else {
                 app.push_status_toast(
@@ -6482,7 +6652,7 @@ async fn handle_plan_choice(
 /// - `queued_messages` — Enter while busy (offline-mode FIFO); drained at
 ///   end-of-turn.
 fn build_pending_input_preview(app: &App) -> PendingInputPreview {
-    let mut preview = PendingInputPreview::new();
+    let mut preview = PendingInputPreview::new().with_ui_theme(app.ui_theme);
     let selected_attachment = app.selected_composer_attachment_index();
     let mut attachment_index = 0usize;
     preview.context_items = crate::tui::file_mention::pending_context_previews(
@@ -6595,6 +6765,7 @@ fn render(f: &mut Frame, app: &mut App) {
 
     // Render header
     {
+        crate::tui::notifications::set_title_visual_theme(app.theme_id);
         let sanitized_context_window = context_usage
             .as_ref()
             .map(|(_, max, _)| *max)
@@ -6652,10 +6823,12 @@ fn render(f: &mut Frame, app: &mut App) {
         )
         .with_reasoning_effort(Some(&effort_label))
         .with_provider(provider_label)
-        .with_status_indicator(crate::tui::widgets::header_status_indicator_frame(
+        .with_status_indicator(crate::tui::widgets::header_status_indicator_frame_for_theme(
             status_indicator_started_at,
             &app.status_indicator,
-        ));
+            app.theme_id,
+        ))
+        .with_ui_theme(app.ui_theme);
         let header_widget = HeaderWidget::new(header_data);
         let buf = f.buffer_mut();
         header_widget.render(header_area, buf);
@@ -6687,7 +6860,13 @@ fn render(f: &mut Frame, app: &mut App) {
 
                 // Render the file-tree pane.
                 if let Some(ref mut state) = app.file_tree {
-                    super::file_tree::render_file_tree(f, tree_area, state, app.ui_theme.mode);
+                    super::file_tree::render_file_tree(
+                        f,
+                        tree_area,
+                        state,
+                        app.theme_id,
+                        app.ui_theme,
+                    );
                 }
 
                 remaining
@@ -6743,23 +6922,23 @@ fn render(f: &mut Frame, app: &mut App) {
 
             let handle_style = if app.sidebar_resizing {
                 Style::default()
-                    .bg(palette::DEEPSEEK_BLUE)
-                    .fg(palette::TEXT_PRIMARY)
+                    .bg(app.ui_theme.selection_bg)
+                    .fg(app.ui_theme.selection_text)
             } else if mouse_over {
                 Style::default()
-                    .bg(palette::STATUS_WARNING)
-                    .fg(palette::TEXT_MUTED)
+                    .bg(app.ui_theme.status_warning)
+                    .fg(app.ui_theme.text_body)
             } else {
                 Style::default()
-                    .bg(palette::DEEPSEEK_SLATE)
-                    .fg(palette::TEXT_MUTED)
+                    .bg(app.ui_theme.panel_bg)
+                    .fg(app.ui_theme.text_muted)
             };
 
             let buf = f.buffer_mut();
             for row in handle_rect.y..handle_rect.y.saturating_add(handle_rect.height) {
                 if row < buf.area().height {
                     buf[(handle_rect.x, row)]
-                        .set_char('│')
+                        .set_char(ui_vertical_bar_char())
                         .set_style(handle_style);
                 }
             }
@@ -6789,8 +6968,8 @@ fn render(f: &mut Frame, app: &mut App) {
                     // tooltip, not a warning highlight (was STATUS_WARNING).
                     let tooltip = ratatui::widgets::Paragraph::new(tooltip_text.as_str()).style(
                         Style::default()
-                            .bg(palette::SURFACE_ELEVATED)
-                            .fg(palette::TEXT_PRIMARY),
+                            .bg(app.ui_theme.elevated_bg)
+                            .fg(app.ui_theme.text_body),
                     );
                     f.render_widget(tooltip, tooltip_area);
                 }
@@ -6832,7 +7011,8 @@ fn render(f: &mut Frame, app: &mut App) {
         // Compute scroll offset and top padding for mouse coordinate mapping.
         let input_text = app.composer_display_input();
         let input_cursor = app.composer_display_cursor();
-        let content_width = usize::from(inner.width.max(1));
+        let content_width =
+            crate::tui::widgets::composer_input_content_width(inner.width, app.theme_id);
         let menu_lines = ComposerWidget::new(
             app,
             composer_max_height,
@@ -6884,7 +7064,7 @@ fn render(f: &mut Frame, app: &mut App) {
             height: card_height.min(size.height),
         };
         let buf = f.buffer_mut();
-        card.render(card_area, buf);
+        card.clone().with_ui_theme(app.ui_theme).render(card_area, buf);
     }
 
     if !app.view_stack.is_empty() {
@@ -6897,6 +7077,10 @@ fn render(f: &mut Frame, app: &mut App) {
         let buf = f.buffer_mut();
         app.view_stack.render(size, buf);
     }
+}
+
+fn render_theme_for_app(app: &App) -> crate::deepseek_theme::Theme {
+    crate::deepseek_theme::Theme::from_ui_theme(app.theme_id, app.ui_theme)
 }
 
 /// Draw a complete application frame, optionally with a full viewport reset.
@@ -6935,7 +7119,10 @@ fn draw_app_frame_inner(
             terminal.backend_mut().write_all(TERMINAL_ORIGIN_RESET)?;
             terminal.clear()?;
         }
-        terminal.draw(|f| render(f, app))?;
+        let render_theme = render_theme_for_app(app);
+        crate::deepseek_theme::with_active_theme(render_theme, || {
+            terminal.draw(|f| render(f, app))
+        })?;
         Ok(())
     })();
 
@@ -6973,8 +7160,10 @@ fn open_backtrack_overlay(app: &mut App) {
     overlay.refresh_from_app(app);
     overlay.set_backtrack_preview(0);
     app.view_stack.push(overlay);
-    app.status_message =
-        Some("Backtrack: \u{2190}/\u{2192} step  Enter rewind  Esc cancel".to_string());
+    app.status_message = Some(format!(
+        "Backtrack: {} step  Enter rewind  Esc cancel",
+        ui_left_right_hint()
+    ));
     app.needs_redraw = true;
 }
 
@@ -7380,7 +7569,7 @@ fn push_approval_request_view(
         intent_summary,
     );
     app.view_stack
-        .push(ApprovalView::new_for_locale(request, app.ui_locale));
+        .push(ApprovalView::new_for_locale(request, app.ui_locale).with_ui_theme(app.ui_theme));
 }
 
 struct ApprovalDecisionEvent {
@@ -7578,8 +7767,10 @@ fn apply_backtrack(app: &mut App, depth: usize) {
     if app.view_stack.top_kind() == Some(ModalKind::LiveTranscript) {
         app.view_stack.pop();
     }
-    app.status_message =
-        Some("Rewound to previous user message — edit and Enter to resend".to_string());
+    app.status_message = Some(format!(
+        "Rewound to previous user message{}edit and Enter to resend",
+        ui_clause_separator()
+    ));
     app.scroll_to_bottom();
     app.mark_history_updated();
     app.needs_redraw = true;
@@ -7824,7 +8015,7 @@ fn derive_session_title(messages: &[Message]) -> Option<String> {
                 let char_count = first_line.chars().count();
                 let chars: String = first_line.chars().take(SESSION_TITLE_MAX_CHARS).collect();
                 if char_count > SESSION_TITLE_MAX_CHARS {
-                    Some(format!("{chars}…"))
+                    Some(format!("{chars}{}", ui_ellipsis()))
                 } else {
                     Some(chars)
                 }
@@ -8117,12 +8308,15 @@ fn terminal_event_needs_viewport_recapture(evt: &Event) -> bool {
     matches!(evt, Event::FocusGained)
 }
 
-pub(crate) fn status_color(level: StatusToastLevel) -> ratatui::style::Color {
+pub(crate) fn status_color_for_theme(
+    level: StatusToastLevel,
+    theme: &palette::UiTheme,
+) -> ratatui::style::Color {
     match level {
-        StatusToastLevel::Info => palette::DEEPSEEK_SKY,
-        StatusToastLevel::Success => palette::STATUS_SUCCESS,
-        StatusToastLevel::Warning => palette::STATUS_WARNING,
-        StatusToastLevel::Error => palette::STATUS_ERROR,
+        StatusToastLevel::Info => theme.status_working,
+        StatusToastLevel::Success => theme.success,
+        StatusToastLevel::Warning => theme.status_warning,
+        StatusToastLevel::Error => theme.error_fg,
     }
 }
 
@@ -8177,7 +8371,7 @@ fn render_toast_stack_overlay(
             height: 1,
         };
         let style = ratatui::style::Style::default()
-            .fg(status_color(toast.level))
+            .fg(status_color_for_theme(toast.level, &app.ui_theme))
             .add_modifier(ratatui::style::Modifier::DIM);
         let line = ratatui::text::Line::styled(format!(" {} ", toast.text), style);
         f.render_widget(ratatui::widgets::Paragraph::new(line), row);
@@ -8190,7 +8384,8 @@ pub(crate) fn open_shell_control(app: &mut App) {
         return;
     }
 
-    app.view_stack.push(ShellControlView::new());
+    app.view_stack
+        .push(ShellControlView::new().with_ui_theme(app.ui_theme));
     app.status_message = Some("Shell control opened".to_string());
 }
 
@@ -8477,7 +8672,8 @@ pub(crate) fn open_pager_for_selection(app: &mut App) -> bool {
         .last_transcript_area
         .map(|area| area.width)
         .unwrap_or(80);
-    let pager = PagerView::from_text("Selection", &text, width.saturating_sub(2));
+    let pager = PagerView::from_text("Selection", &text, width.saturating_sub(2))
+        .with_ui_theme(app.ui_theme);
     app.view_stack.push(pager);
     true
 }
@@ -8491,8 +8687,9 @@ fn open_pager_for_last_message(app: &mut App) -> bool {
         .last_transcript_area
         .map(|area| area.width)
         .unwrap_or(80);
-    let text = history_cell_to_text(cell, width);
-    let pager = PagerView::from_text("Message", &text, width.saturating_sub(2));
+    let text = history_cell_to_text_with_options(cell, width, app.transcript_render_options());
+    let pager = PagerView::from_text("Message", &text, width.saturating_sub(2))
+        .with_ui_theme(app.ui_theme);
     app.view_stack.push(pager);
     true
 }
@@ -8536,7 +8733,10 @@ fn open_activity_detail_pager(app: &mut App) -> bool {
         "Activity Detail"
     };
     app.view_stack
-        .push(PagerView::from_text(title, &text, width.saturating_sub(2)));
+        .push(
+            PagerView::from_text(title, &text, width.saturating_sub(2))
+                .with_ui_theme(app.ui_theme),
+        );
     true
 }
 
@@ -8650,7 +8850,11 @@ fn activity_detail_text(app: &App, cell_index: usize, width: u16) -> Option<Stri
     }
 
     sections.push(String::new());
-    sections.push(activity_cell_to_text(cell, width));
+    sections.push(activity_cell_to_text(
+        cell,
+        width,
+        app.transcript_render_options(),
+    ));
     Some(sections.join("\n"))
 }
 
@@ -8692,8 +8896,9 @@ fn reasoning_timeline_text(app: &App, selected_cell_index: usize) -> Option<Stri
     }
     sections.push("Activity: reasoning timeline".to_string());
     sections.push(format!(
-        "Status: {} · {total} chunk{}",
+        "Status: {}{}{total} chunk{}",
         if running { "running" } else { "done" },
+        ui_status_separator(),
         if total == 1 { "" } else { "s" }
     ));
     if let Some(position) = selected_position {
@@ -8738,7 +8943,7 @@ fn reasoning_timeline_text(app: &App, selected_cell_index: usize) -> Option<Stri
             "done".to_string()
         };
         if let Some(duration_secs) = duration_secs {
-            status.push_str(" · ");
+            status.push_str(ui_status_separator());
             status.push_str(&format!("{duration_secs:.1}s"));
         }
         sections.push(format!("Thinking chunk {position} of {total}{marker}"));
@@ -8795,7 +9000,7 @@ fn activity_status_line(cell: &HistoryCell) -> Option<String> {
                 "Status: done".to_string()
             };
             if let Some(duration_secs) = duration_secs {
-                line.push_str(" · ");
+                line.push_str(ui_status_separator());
                 line.push_str(&format!("{duration_secs:.1}s"));
             }
             Some(line)
@@ -8804,7 +9009,7 @@ fn activity_status_line(cell: &HistoryCell) -> Option<String> {
             let status = tool_status_for_activity(tool)?;
             let mut line = format!("Status: {}", activity_status_label(status));
             if let Some(duration_ms) = tool_duration_for_activity(tool) {
-                line.push_str(" · ");
+                line.push_str(ui_status_separator());
                 line.push_str(&format_activity_duration_ms(duration_ms));
             }
             Some(line)
@@ -8944,17 +9149,21 @@ fn activity_detail_handle_line(app: &App, cell_index: usize, cell: &HistoryCell)
     }
 }
 
-fn activity_cell_to_text(cell: &HistoryCell, width: u16) -> String {
+fn activity_cell_to_text(
+    cell: &HistoryCell,
+    width: u16,
+    options: TranscriptRenderOptions,
+) -> String {
     let lines = match cell {
         HistoryCell::Tool(_) => cell.lines_with_options(
             width,
             TranscriptRenderOptions {
                 calm_mode: true,
                 low_motion: true,
-                ..TranscriptRenderOptions::default()
+                ..options
             },
         ),
-        _ => cell.transcript_lines(width),
+        _ => cell.transcript_lines_with_options(width, options),
     };
     lines
         .iter()
@@ -8995,7 +9204,8 @@ fn spillover_pager_section(app: &App, cell_index: usize) -> Option<String> {
         Err(err) => format!("(could not read spillover file: {err})"),
     };
     Some(format!(
-        "── Full output (spillover) ──\nFile: {path_str}\n\n{body}"
+        "{}\nFile: {path_str}\n\n{body}",
+        ui_spillover_title()
     ))
 }
 
@@ -9036,7 +9246,8 @@ pub(crate) fn open_details_pager_for_cell(app: &mut App, cell_index: usize) -> b
             format!("Tool: {}", detail.tool_name),
             &content,
             width.saturating_sub(2),
-        ));
+        )
+        .with_ui_theme(app.ui_theme));
         return true;
     }
 
@@ -9059,12 +9270,13 @@ pub(crate) fn open_details_pager_for_cell(app: &mut App, cell_index: usize) -> b
         .last_transcript_area
         .map(|area| area.width)
         .unwrap_or(80);
-    let content = history_cell_to_text(cell, width);
+    let content = history_cell_to_text_with_options(cell, width, app.transcript_render_options());
     app.view_stack.push(PagerView::from_text(
         title,
         &content,
         width.saturating_sub(2),
-    ));
+    )
+    .with_ui_theme(app.ui_theme));
     true
 }
 
@@ -9090,7 +9302,7 @@ pub(crate) fn copy_cell_to_clipboard(app: &mut App, cell_index: usize) -> bool {
         .last_transcript_area
         .map(|area| area.width)
         .unwrap_or(80);
-    let text = history_cell_to_text(cell, width);
+    let text = history_cell_to_text_with_options(cell, width, app.transcript_render_options());
     if text.trim().is_empty() {
         app.status_message = Some("Message is empty".to_string());
         return false;
@@ -9136,7 +9348,11 @@ pub(crate) fn selected_detail_footer_label(app: &App) -> Option<String> {
         } else {
             "raw"
         };
-        format!(" · {} {noun}", key_shortcuts::tool_details_shortcut_label())
+        format!(
+            "{}{} {noun}",
+            ui_status_separator(),
+            key_shortcuts::tool_details_shortcut_label()
+        )
     } else {
         String::new()
     };

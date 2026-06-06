@@ -10,16 +10,33 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget, Wrap},
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::commands;
 use crate::localization::Locale;
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::skills;
 use crate::tools::spec::ApprovalRequirement;
 use crate::tools::spec::ToolCapability;
 use crate::tools::{ToolContext, ToolRegistryBuilder};
 use crate::tui::views::{CommandPaletteAction, ModalKind, ModalView, ViewAction, ViewEvent};
+
+fn command_palette_move_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " Up/Down/j/k move  "
+    } else {
+        " \u{2191}/\u{2193}/j/k move  "
+    }
+}
+
+fn command_palette_description_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " \u{2014} "
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PaletteSection {
@@ -44,6 +61,7 @@ pub struct CommandPaletteView {
     filtered: Vec<usize>,
     query: String,
     selected: usize,
+    ui_theme: UiTheme,
 }
 
 pub fn build_entries(
@@ -253,8 +271,9 @@ fn build_mcp_entries(
                     section: PaletteSection::Mcp,
                     label: format!("mcp:{}:tool:{} > use", server.name, tool.name),
                     description: format!(
-                        "Insert {} into input — type args then send{}",
+                        "Insert {} into input{}type args then send{}",
                         tool.model_name,
+                        command_palette_description_separator(),
                         tool.description
                             .as_ref()
                             .map_or(String::new(), |desc| format!(" ({desc})"))
@@ -348,11 +367,122 @@ fn format_mcp_server_details(
     lines.join("\n")
 }
 
-fn modal_block() -> Block<'static> {
+fn modal_block(ui_theme: UiTheme) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::BORDER_COLOR))
+        .border_style(Style::default().fg(ui_theme.border))
         .padding(Padding::uniform(1))
+}
+
+fn command_palette_bottom_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " Up/Down/j/k move  Enter run/open  Esc close "
+    } else {
+        " \u{2191}/\u{2193}/j/k move  Enter run/open  Esc close "
+    }
+}
+
+fn render_ascii_command_palette_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    ui_theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(ui_theme.surface_bg);
+    let border_style = Style::default().fg(ui_theme.border).bg(ui_theme.surface_bg);
+    let title_style = Style::default()
+        .fg(ui_theme.status_working)
+        .bg(ui_theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let hint_style = Style::default()
+        .fg(ui_theme.text_muted)
+        .bg(ui_theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(" Command Palette ", area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let hint = ascii_prefix(
+            command_palette_bottom_hint(),
+            area.width.saturating_sub(4) as usize,
+        );
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &hint,
+            hint_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
 }
 
 fn parse_section_term(term: &str) -> Option<(PaletteSection, String)> {
@@ -393,6 +523,52 @@ fn section_rank(section: PaletteSection) -> usize {
         PaletteSection::Tool => 3,
         PaletteSection::Mcp => 4,
     }
+}
+
+fn command_palette_ellipsis(max_width: usize) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        match max_width {
+            0 => "",
+            1 => ".",
+            2 => "..",
+            _ => "...",
+        }
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn truncate_to_width(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+
+    let ellipsis = command_palette_ellipsis(max_width);
+    let ellipsis_width = ellipsis.width();
+    let limit = max_width.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = ch.width().unwrap_or(0);
+        if width + ch_width > limit {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str(ellipsis);
+    out
+}
+
+fn pad_to_display_width(mut text: String, width: usize) -> String {
+    let current = text.width();
+    if current < width {
+        text.push_str(&" ".repeat(width - current));
+    }
+    text
 }
 
 fn command_runs_directly(name: &str) -> bool {
@@ -595,9 +771,16 @@ impl CommandPaletteView {
             filtered: Vec::new(),
             query: String::new(),
             selected: 0,
+            ui_theme: palette::UI_THEME,
         };
         view.refilter();
         view
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn refilter(&mut self) {
@@ -624,17 +807,17 @@ impl CommandPaletteView {
         }
     }
 
-    fn scope_hint_lines() -> Line<'static> {
+    fn scope_hint_lines(&self) -> Line<'static> {
         let hint = "scope: c:/cmd: , s:/skill: , t:/tool: , m:/mcp:";
         Line::from(Span::styled(
             hint,
             Style::default()
-                .fg(palette::TEXT_DIM)
+                .fg(self.ui_theme.text_dim)
                 .add_modifier(Modifier::ITALIC),
         ))
     }
 
-    fn format_section_label(section: PaletteSection, count: usize) -> Line<'static> {
+    fn format_section_label(&self, section: PaletteSection, count: usize) -> Line<'static> {
         let title = match section {
             PaletteSection::Action => "Actions",
             PaletteSection::Command => "Commands",
@@ -645,29 +828,32 @@ impl CommandPaletteView {
         Line::from(vec![Span::styled(
             format!("  {title} ({count})  "),
             Style::default()
-                .fg(palette::DEEPSEEK_SKY)
+                .fg(self.ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )])
     }
 
-    fn scope_examples() -> Vec<Line<'static>> {
+    fn scope_examples(&self) -> Vec<Line<'static>> {
         vec![
-            Line::from(Span::styled("Try:", Style::default().fg(palette::TEXT_DIM))),
+            Line::from(Span::styled(
+                "Try:",
+                Style::default().fg(self.ui_theme.text_dim),
+            )),
             Line::from(Span::styled(
                 "  c:<term>  Command-only   e.g. c:agent",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )),
             Line::from(Span::styled(
                 "  s:<term>  Skill-only     e.g. s:search",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )),
             Line::from(Span::styled(
                 "  t:<term>  Tool-only      e.g. t:git",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )),
             Line::from(Span::styled(
                 "  m:<term>  MCP-only       e.g. m:filesystem",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )),
         ]
     }
@@ -770,6 +956,26 @@ impl ModalView for CommandPaletteView {
         };
 
         Clear.render(popup_area, buf);
+        let content_area = if palette::ascii_ui_enabled() {
+            render_ascii_command_palette_chrome(popup_area, buf, self.ui_theme)
+        } else {
+            let block = modal_block(self.ui_theme)
+                .title(" Command Palette ")
+                .title_bottom(Line::from(vec![
+                    Span::styled(
+                        command_palette_move_hint(),
+                        Style::default().fg(self.ui_theme.text_muted),
+                    ),
+                    Span::styled(
+                        "Enter run/open  ",
+                        Style::default().fg(self.ui_theme.text_muted),
+                    ),
+                    Span::styled("Esc close", Style::default().fg(self.ui_theme.text_muted)),
+                ]));
+            let inner = block.inner(popup_area);
+            block.render(popup_area, buf);
+            inner
+        };
 
         let mut lines = Vec::new();
         let query_label = if self.query.is_empty() {
@@ -779,7 +985,7 @@ impl ModalView for CommandPaletteView {
         };
         lines.push(Line::from(Span::styled(
             query_label,
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(self.ui_theme.text_muted),
         )));
         let match_count = if self.query.is_empty() {
             format!("{} entries", self.entries.len())
@@ -788,10 +994,10 @@ impl ModalView for CommandPaletteView {
         };
         lines.push(Line::from(Span::styled(
             match_count,
-            Style::default().fg(palette::TEXT_DIM).italic(),
+            Style::default().fg(self.ui_theme.text_dim).italic(),
         )));
-        lines.push(Self::scope_hint_lines());
-        lines.extend(Self::scope_examples());
+        lines.push(self.scope_hint_lines());
+        lines.extend(self.scope_examples());
         lines.push(Line::from(""));
 
         // Rows the bordered popup can show for the list, minus the header that
@@ -799,9 +1005,7 @@ impl ModalView for CommandPaletteView {
         // labels and separators, so the scroll window is sized against the real
         // rendered cost rather than a flat entry count (#2590).
         let header_lines = lines.len();
-        let available = (popup_height as usize)
-            .saturating_sub(2) // top + bottom border
-            .saturating_sub(header_lines);
+        let available = (content_area.height as usize).saturating_sub(header_lines);
         let mut action_count = 0usize;
         let mut command_count = 0usize;
         let mut skill_count = 0usize;
@@ -819,10 +1023,10 @@ impl ModalView for CommandPaletteView {
         if self.filtered.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No matches.",
-                Style::default().fg(palette::TEXT_MUTED).italic(),
+                Style::default().fg(self.ui_theme.text_muted).italic(),
             )));
         } else {
-            let label_width = 24.min(popup_width.saturating_sub(26) as usize);
+            let label_width = 24.min(content_area.width.saturating_sub(26) as usize);
             let sections: Vec<PaletteSection> = self
                 .filtered
                 .iter()
@@ -846,53 +1050,38 @@ impl ModalView for CommandPaletteView {
                         PaletteSection::Tool => tool_count,
                         PaletteSection::Mcp => mcp_count,
                     };
-                    lines.push(Self::format_section_label(entry.section, count));
+                    lines.push(self.format_section_label(entry.section, count));
                     active_section = Some(entry.section);
                 }
 
                 let style = if is_selected {
                     Style::default()
-                        .fg(palette::SELECTION_TEXT)
-                        .bg(palette::SELECTION_BG)
+                        .fg(self.ui_theme.selection_text)
+                        .bg(self.ui_theme.selection_bg)
                 } else {
-                    Style::default().fg(palette::TEXT_PRIMARY)
+                    Style::default().fg(self.ui_theme.text_body)
                 };
 
-                let mut line = format!("  {:<label_width$}", entry.label);
-                let desc_capacity = popup_width as usize - (label_width + 4);
-                let desc = if entry.description.width() > desc_capacity {
-                    let mut shortened = String::new();
-                    for ch in entry.description.chars() {
-                        if shortened.width() >= desc_capacity.saturating_sub(3) {
-                            break;
-                        }
-                        shortened.push(ch);
-                    }
-                    format!("{shortened}...")
+                let desc_capacity = (content_area.width as usize).saturating_sub(label_width + 4);
+                let label = pad_to_display_width(
+                    truncate_to_width(&entry.label, label_width),
+                    label_width,
+                );
+                let desc = truncate_to_width(&entry.description, desc_capacity);
+                let mut line = if is_selected {
+                    format!("> {label}")
                 } else {
-                    entry.description.clone()
+                    format!("  {label}")
                 };
-                if is_selected {
-                    line = format!("> {:<label_width$}", entry.label);
-                }
                 line.push_str("  ");
                 line.push_str(&desc);
                 lines.push(Line::from(Span::styled(line, style)));
             }
         }
 
-        let block = modal_block()
-            .title(" Command Palette ")
-            .title_bottom(Line::from(vec![
-                Span::styled(" ↑/↓/j/k move  ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::styled("Enter run/open  ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::styled("Esc close", Style::default().fg(palette::TEXT_MUTED)),
-            ]));
-
         Paragraph::new(lines)
-            .block(block)
             .wrap(Wrap { trim: false })
-            .render(popup_area, buf);
+            .render(content_area, buf);
     }
 }
 
@@ -1257,6 +1446,17 @@ mod tests {
     }
 
     #[test]
+    fn command_palette_description_separator_has_ascii_fallback() {
+        crate::palette::set_ascii_ui_for_tests(Some(false));
+        assert_eq!(command_palette_description_separator(), " \u{2014} ");
+
+        crate::palette::set_ascii_ui_for_tests(Some(true));
+        assert_eq!(command_palette_description_separator(), " - ");
+
+        crate::palette::set_ascii_ui_for_tests(None);
+    }
+
+    #[test]
     fn command_palette_marks_disabled_servers_visibly() {
         // The healthy/failed cases are covered above; disabled was the
         // remaining gap from #197's acceptance list. Disabled servers must
@@ -1321,5 +1521,102 @@ mod tests {
                 action: CommandPaletteAction::ExecuteCommand { .. }
             })
         ));
+    }
+
+    #[test]
+    fn command_palette_render_uses_injected_theme_colors() {
+        let entries = vec![palette_entry(
+            PaletteSection::Command,
+            "/config",
+            "open config",
+            "/config",
+        )];
+        let mut theme = palette::UI_THEME;
+        theme.border = ratatui::style::Color::Indexed(45);
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        theme.selection_text = ratatui::style::Color::Indexed(231);
+        let view = CommandPaletteView::new(entries).with_ui_theme(theme);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 24));
+
+        view.render(Rect::new(0, 0, 80, 24), &mut buf);
+
+        assert_eq!(buf[(2, 2)].fg, theme.border);
+        let has_selection_cell = buf
+            .content()
+            .iter()
+            .any(|cell| cell.bg == theme.selection_bg && cell.fg == theme.selection_text);
+        assert!(has_selection_cell, "selected row should use injected theme");
+    }
+
+    #[test]
+    fn command_palette_cjk_rows_fit_80_columns() {
+        let entries = vec![
+            palette_entry(
+                PaletteSection::Command,
+                "/非常长的命令名称用于测试宽字符列对齐",
+                "这是一段非常长的中文描述，用来确认命令面板不会因为宽字符补空格而超过八十列",
+                "/wide",
+            ),
+            palette_entry(
+                PaletteSection::Skill,
+                "skill:中文宽字符技能名称",
+                "另一个中文描述，覆盖不同 section 的渲染路径",
+                "/skill cjk",
+            ),
+        ];
+        let view = CommandPaletteView::new(entries).with_ui_theme(palette::DEEPSEEK_SHELL_UI_THEME);
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        for y in area.top()..area.bottom() {
+            let mut row = String::new();
+            for x in area.left()..area.right() {
+                row.push_str(buf[(x, y)].symbol());
+            }
+            assert!(
+                UnicodeWidthStr::width(row.as_str()) <= usize::from(area.width),
+                "command palette row overflowed 80 columns: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_command_palette_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_command_palette_chrome(
+            area,
+            &mut buf,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 命令面板 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
     }
 }

@@ -4,7 +4,10 @@
 
 use std::time::Instant;
 
-use super::CommandResult;
+use super::{
+    CommandResult, command_missing_marker, command_rule, command_rule_with_width,
+    command_section_heading, command_text_separator, command_text_with_ascii_fallback,
+};
 use crate::client::{CacheWarmupKey, PromptInspection, inspect_prompt_for_request};
 use crate::compaction::estimate_input_tokens_conservative;
 use crate::dependencies::{ExternalTool, Git};
@@ -82,7 +85,7 @@ pub fn tokens(app: &mut App) -> CommandResult {
         .replace("{api_messages}", &message_count.to_string())
         .replace("{chat_messages}", &chat_count.to_string())
         .replace("{model}", &app.model);
-    CommandResult::message(report)
+    CommandResult::message(command_text_with_ascii_fallback(report))
 }
 
 /// Show session cost breakdown
@@ -90,7 +93,7 @@ pub fn cost(app: &mut App) -> CommandResult {
     let total = app.displayed_session_cost_for_currency(app.cost_currency);
     let report = tr(app.ui_locale, MessageId::CmdCostReport)
         .replace("{cost}", &app.format_cost_amount_precise(total));
-    CommandResult::message(report)
+    CommandResult::message(command_text_with_ascii_fallback(report))
 }
 
 /// Show current system prompt
@@ -123,8 +126,9 @@ pub fn system_prompt(app: &mut App) -> CommandResult {
     };
 
     CommandResult::message(format!(
-        "System Prompt ({} mode):\n─────────────────────────────\n{}",
+        "System Prompt ({} mode):\n{}\n{}",
         app.mode.label(),
+        command_rule(),
         display
     ))
 }
@@ -411,10 +415,13 @@ fn short_hash(hash: &str) -> &str {
 /// correlate cache misses with prefix drift.
 fn format_cache_stats(app: &App) -> String {
     let mut out = String::new();
+    let separator = command_text_separator();
     out.push_str("Cache Stats\n");
 
-    // ── Prefix stability ──────────────────────────────────────────────
-    out.push_str("\n── Prefix Stability\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("Prefix Stability")
+    ));
     match app.prefix_stability_pct {
         Some(pct) => {
             let checks = app.prefix_checks_total;
@@ -431,7 +438,9 @@ fn format_cache_stats(app: &App) -> String {
                     "  Stability: {pct}% ({stable_checks}/{checks} checks, {changes} change{})\n",
                     if changes == 1 { "" } else { "s" }
                 ));
-                out.push_str("  Status:    WARNING — prefix has changed\n");
+                out.push_str(&format!(
+                    "  Status:    WARNING{separator}prefix has changed\n"
+                ));
                 if let Some(ref desc) = app.last_prefix_change_desc {
                     out.push_str(&format!("  Last change: {desc}\n"));
                 }
@@ -443,15 +452,19 @@ fn format_cache_stats(app: &App) -> String {
         }
     }
 
-    // ── Prefix fingerprint ────────────────────────────────────────────
-    out.push_str("\n── Prefix Fingerprint\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("Prefix Fingerprint")
+    ));
     match &app.last_pinned_prefix_hash {
         Some(hash) => {
             out.push_str(&format!("  Pinned hash: {hash}\n"));
             let short = if hash.len() >= 12 { &hash[..12] } else { hash };
             out.push_str(&format!("  Short id:    {short}\n"));
             if app.prefix_change_count > 0 {
-                out.push_str("  Drift:       WARNING — hash has changed during this session\n");
+                out.push_str(&format!(
+                    "  Drift:       WARNING{separator}hash has changed during this session\n"
+                ));
                 out.push_str(&format!(
                     "               ({change} change{plural} detected)\n",
                     change = app.prefix_change_count,
@@ -471,8 +484,10 @@ fn format_cache_stats(app: &App) -> String {
         }
     }
 
-    // ── Cache hit-rate summary ────────────────────────────────────────
-    out.push_str("\n── Cache Hit Rate\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("Cache Hit Rate")
+    ));
     let history = &app.session.turn_cache_history;
     if history.is_empty() {
         out.push_str("  No turn telemetry recorded yet.\n");
@@ -532,17 +547,20 @@ fn format_cache_stats(app: &App) -> String {
 /// enforcing the full contract at request time.
 fn format_cache_zones(app: &App) -> String {
     let mut out = String::new();
+    let separator = command_text_separator();
     out.push_str("Cache Zones (#2264 three-zone contract, Phase 1 foundation)\n");
 
-    // ── PinnedPrefix ─────────────────────────────────────────────────
-    out.push_str("\n── PinnedPrefix (system + tools, frozen baseline)\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("PinnedPrefix (system + tools, frozen baseline)")
+    ));
     match &app.last_pinned_prefix_hash {
         Some(hash) => {
             let short = if hash.len() >= 12 { &hash[..12] } else { hash };
             out.push_str(&format!("  Short id: {short}\n"));
             if app.prefix_change_count > 0 {
                 out.push_str(&format!(
-                    "  Status:    WARNING — {change} drift{plural} detected\n",
+                    "  Status:    WARNING{separator}{change} drift{plural} detected\n",
                     change = app.prefix_change_count,
                     plural = if app.prefix_change_count == 1 {
                         ""
@@ -563,9 +581,13 @@ fn format_cache_zones(app: &App) -> String {
         }
     }
 
-    // ── AppendLog ────────────────────────────────────────────────────
-    out.push_str("\n── AppendLog (conversation history, append-only)\n");
-    out.push_str("  Status:      Phase 1 scaffolding — not yet wired into engine\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("AppendLog (conversation history, append-only)")
+    ));
+    out.push_str(&format!(
+        "  Status:      Phase 1 scaffolding{separator}not yet wired into engine\n"
+    ));
     let msg_count = app.api_messages.len();
     out.push_str(&format!("  Messages:    {msg_count}\n"));
     let history_count = app
@@ -575,24 +597,31 @@ fn format_cache_zones(app: &App) -> String {
         .count();
     out.push_str(&format!("  History msgs: {history_count}\n"));
 
-    // ── TurnScratch ──────────────────────────────────────────────────
-    out.push_str("\n── TurnScratch (per-turn ephemeral data)\n");
-    out.push_str("  Status:      Phase 1 scaffolding — not yet wired into engine\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("TurnScratch (per-turn ephemeral data)")
+    ));
+    out.push_str(&format!(
+        "  Status:      Phase 1 scaffolding{separator}not yet wired into engine\n"
+    ));
 
-    // ── Zone contract summary ────────────────────────────────────────
-    out.push_str("\n── Contract Status\n");
+    out.push_str(&format!(
+        "\n{}\n",
+        command_section_heading("Contract Status")
+    ));
     let has_drift = app.prefix_change_count > 0;
+    let pinned_status = if app.last_pinned_prefix_hash.is_some() {
+        if has_drift {
+            format!("WARNING{separator}drifted")
+        } else {
+            "OK".to_string()
+        }
+    } else {
+        "not frozen".to_string()
+    };
     out.push_str(&format!(
         "  PinnedPrefix: {}\n",
-        if app.last_pinned_prefix_hash.is_some() {
-            if has_drift {
-                "WARNING — drifted"
-            } else {
-                "OK"
-            }
-        } else {
-            "not frozen"
-        }
+        pinned_status
     ));
     out.push_str("  AppendLog:    Phase 1 foundation\n");
     out.push_str("  TurnScratch:  Phase 1 foundation\n");
@@ -694,25 +723,26 @@ fn format_cache_history(app: &App, count: usize, locale: Locale) -> String {
         .replace("{count}", &rows.len().to_string())
         .replace("{total}", &total.to_string())
         .replace("{model}", &app.model);
-    header.push_str(&"─".repeat(76));
+    header.push_str(&command_rule_with_width(76));
     header.push('\n');
     header.push_str("turn   in    out   hit   miss   replay   ratio   age\n");
-    header.push_str(&"─".repeat(76));
+    header.push_str(&command_rule_with_width(76));
     header.push('\n');
 
     let now = Instant::now();
     let mut body = String::new();
     let absolute_start = total.saturating_sub(rows.len());
+    let missing = command_missing_marker();
     for (i, rec) in rows.iter().enumerate() {
         let turn_index = absolute_start + i + 1;
         totals_input += u64::from(rec.input_tokens);
 
         let replay_cell = rec
             .reasoning_replay_tokens
-            .map_or_else(|| "—".to_string(), |t| t.to_string());
+            .map_or_else(|| missing.to_string(), |t| t.to_string());
         let age = humanize_age(now.saturating_duration_since(rec.recorded_at));
 
-        // No cache telemetry → render `—` everywhere and don't pollute totals
+        // No cache telemetry: render the missing marker everywhere and don't pollute totals
         // with inferred zeros. Some providers (and some routes inside DeepSeek)
         // skip the cache fields; including a synthesized 0/N for those turns
         // would make every aggregate ratio look broken.
@@ -722,10 +752,10 @@ fn format_cache_history(app: &App, count: usize, locale: Locale) -> String {
                 turn = turn_index,
                 input = rec.input_tokens,
                 output = rec.output_tokens,
-                hit = "—",
-                miss = "—",
+                hit = missing,
+                miss = missing,
                 replay = replay_cell,
-                ratio = "—",
+                ratio = missing,
                 age = age,
             ));
             continue;
@@ -735,7 +765,7 @@ fn format_cache_history(app: &App, count: usize, locale: Locale) -> String {
         let miss = miss_reported.unwrap_or_else(|| rec.input_tokens.saturating_sub(hit));
         let accounted = u64::from(hit) + u64::from(miss);
         let ratio = if accounted == 0 {
-            "    —".to_string()
+            format!("{missing:>5}")
         } else {
             format!("{:>5.1}%", 100.0 * f64::from(hit) / accounted as f64)
         };
@@ -762,7 +792,7 @@ fn format_cache_history(app: &App, count: usize, locale: Locale) -> String {
 
     let totals_accounted = totals_hit + totals_miss;
     let avg_ratio = if totals_accounted == 0 {
-        "—".to_string()
+        missing.to_string()
     } else {
         format!(
             "{:.1}%",
@@ -771,7 +801,7 @@ fn format_cache_history(app: &App, count: usize, locale: Locale) -> String {
     };
 
     let mut footer = String::new();
-    footer.push_str(&"─".repeat(76));
+    footer.push_str(&command_rule_with_width(76));
     footer.push('\n');
     footer.push_str(
         &tr(locale, MessageId::CmdCacheTotals)
@@ -802,6 +832,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::models::{ContentBlock, Message, SystemBlock, Tool};
+    use crate::test_support::EnvVarGuard;
     use crate::tui::app::{App, TuiOptions};
     use crate::tui::history::{GenericToolCell, ToolCell, ToolStatus};
     use std::path::PathBuf;
@@ -891,6 +922,19 @@ mod tests {
     }
 
     #[test]
+    fn tokens_report_uses_ascii_rule_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let mut app = create_test_app();
+        let result = tokens(&mut app);
+        let msg = result.message.expect("tokens command produces a message");
+
+        assert!(msg.contains(&"-".repeat(29)), "got: {msg}");
+        assert!(!msg.contains('\u{2500}'), "got: {msg}");
+    }
+
+    #[test]
     fn test_cost_shows_spending_info() {
         let mut app = create_test_app();
         app.session.session_cost = 0.1234;
@@ -901,6 +945,19 @@ mod tests {
         assert!(msg.contains("Approx total spent:"));
         assert!(msg.contains("approximate"));
         assert!(msg.contains("$0.1234"));
+    }
+
+    #[test]
+    fn cost_report_uses_ascii_rule_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let mut app = create_test_app();
+        let result = cost(&mut app);
+        let msg = result.message.expect("cost command produces a message");
+
+        assert!(msg.contains(&"-".repeat(29)), "got: {msg}");
+        assert!(!msg.contains('\u{2500}'), "got: {msg}");
     }
 
     #[test]
@@ -1354,6 +1411,29 @@ mod tests {
     }
 
     #[test]
+    fn cache_command_table_uses_ascii_chrome_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let mut app = create_test_app();
+        app.push_turn_cache_record(TurnCacheRecord {
+            input_tokens: 1_000,
+            output_tokens: 100,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
+            reasoning_replay_tokens: None,
+            recorded_at: Instant::now(),
+        });
+
+        let result = cache(&mut app, None);
+        let msg = result.message.expect("cache produces a message");
+
+        assert!(msg.contains(&"-".repeat(76)), "got: {msg}");
+        assert!(!msg.contains('\u{2500}'), "got: {msg}");
+        assert!(!msg.contains('\u{2014}'), "got: {msg}");
+    }
+
+    #[test]
     fn turn_cache_history_is_capped_at_50() {
         let mut app = create_test_app();
         for i in 0..(crate::tui::app::App::TURN_CACHE_HISTORY_CAP + 12) {
@@ -1487,6 +1567,22 @@ mod tests {
         let msg = result.message.unwrap();
         assert!(msg.contains("Retrying"));
         assert!(msg.contains("..."));
+    }
+
+    #[test]
+    fn edit_uses_ascii_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = create_test_app();
+        app.history.push(HistoryCell::User {
+            content: "revise this".to_string(),
+        });
+
+        let result = edit(&mut app);
+        let msg = result.message.unwrap();
+
+        assert!(msg.contains("composer - edit and press Enter"));
+        assert!(!msg.contains('\u{2014}'), "got: {msg}");
     }
 
     #[test]
@@ -1998,6 +2094,45 @@ mod tests {
     }
 
     #[test]
+    fn cache_stats_uses_ascii_status_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let mut app = create_test_app();
+        app.prefix_stability_pct = Some(67);
+        app.prefix_checks_total = 3;
+        app.prefix_change_count = 1;
+        app.last_pinned_prefix_hash = Some(
+            "deadbeef0000deadbeef0000deadbeef0000deadbeef0000deadbeef0000deadbeef".to_string(),
+        );
+
+        let result = cache(&mut app, Some("stats"));
+        let msg = result.message.expect("cache stats produces a message");
+
+        assert!(msg.contains("WARNING - prefix has changed"), "got: {msg}");
+        assert!(!msg.contains('\u{2014}'), "got: {msg}");
+    }
+
+    #[test]
+    fn cache_zones_uses_ascii_status_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let mut app = create_test_app();
+        app.prefix_change_count = 1;
+        app.last_pinned_prefix_hash = Some(
+            "deadbeef0000deadbeef0000deadbeef0000deadbeef0000deadbeef0000deadbeef".to_string(),
+        );
+
+        let result = cache(&mut app, Some("zones"));
+        let msg = result.message.expect("cache zones produces a message");
+
+        assert!(msg.contains("WARNING - 1 drift detected"), "got: {msg}");
+        assert!(msg.contains("Phase 1 scaffolding - not yet wired"), "got: {msg}");
+        assert!(!msg.contains('\u{2014}'), "got: {msg}");
+    }
+
+    #[test]
     fn cache_stats_shows_cache_hit_summary() {
         let mut app = create_test_app();
         app.prefix_stability_pct = Some(100);
@@ -2223,7 +2358,10 @@ pub fn patch_undo(app: &mut App) -> CommandResult {
     };
 
     if snapshots.is_empty() {
-        return CommandResult::message("No snapshots found to undo — nothing to revert.");
+        return CommandResult::message(format!(
+            "No snapshots found to undo{}nothing to revert.",
+            command_text_separator()
+        ));
     }
 
     // Prefer the newest revertable `tool:` / `pre-turn:` snapshot whose
@@ -2239,9 +2377,10 @@ pub fn patch_undo(app: &mut App) -> CommandResult {
         });
 
     let Some(target) = target else {
-        return CommandResult::message(
-            "No older tool or pre-turn snapshots differ from the current workspace — nothing to revert.",
-        );
+        return CommandResult::message(format!(
+            "No older tool or pre-turn snapshots differ from the current workspace{}nothing to revert.",
+            command_text_separator()
+        ));
     };
 
     if let Err(e) = repo.restore(&target.id) {
@@ -2321,9 +2460,10 @@ pub fn edit(app: &mut App) -> CommandResult {
             app.input = content;
             app.cursor_position = app.input.chars().count();
             app.edit_in_progress = true;
-            CommandResult::message(
-                "Last message loaded into composer — edit and press Enter to resubmit",
-            )
+            CommandResult::message(format!(
+                "Last message loaded into composer{}edit and press Enter to resubmit",
+                command_text_separator()
+            ))
         }
         None => CommandResult::message("No previous message to edit"),
     }
@@ -2378,13 +2518,19 @@ pub fn diff(app: &mut App) -> CommandResult {
             let stat_str = stat_stdout.trim();
             let mut message = summary;
             if !stat_str.is_empty() {
-                message.push_str("\n\n── Stat ──\n");
+                message.push_str(&format!(
+                    "\n\n{}\n",
+                    command_section_heading("Stat")
+                ));
                 message.push_str(stat_str);
             }
             CommandResult::message(message)
         }
         (Err(e), _) | (_, Err(e)) => {
-            CommandResult::message(format!("Git diff failed — is this a git repository?\n{e}"))
+            CommandResult::message(format!(
+                "Git diff failed{}is this a git repository?\n{e}",
+                command_text_separator()
+            ))
         }
     }
 }

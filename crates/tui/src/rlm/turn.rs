@@ -654,13 +654,18 @@ fn build_metadata_message(
 }
 
 fn summarize_code(code: &str) -> String {
+    summarize_code_with_ascii(code, crate::palette::ascii_ui_enabled())
+}
+
+fn summarize_code_with_ascii(code: &str, ascii: bool) -> String {
     let lines: Vec<&str> = code.lines().collect();
     if lines.len() <= 8 {
         return code.to_string();
     }
     let head = lines[..4].join("\n");
     let tail = lines[lines.len() - 4..].join("\n");
-    format!("{} lines:\n{head}\n…\n{tail}", lines.len())
+    let ellipsis = if ascii { "..." } else { "…" };
+    format!("{} lines:\n{head}\n{ellipsis}\n{tail}", lines.len())
 }
 
 fn extract_text_blocks(blocks: &[ContentBlock]) -> String {
@@ -982,6 +987,15 @@ mod tests {
         assert!(s.contains("line0"));
         assert!(s.contains("line19"));
         assert!(s.contains("…"));
+    }
+
+    #[test]
+    fn summarize_code_uses_ascii_ellipsis_when_enabled() {
+        let lines: Vec<String> = (0..20).map(|i| format!("line{i}")).collect();
+        let code = lines.join("\n");
+        let s = summarize_code_with_ascii(&code, true);
+        assert!(s.contains("\n...\n"));
+        assert!(!s.contains('…'));
     }
 
     #[test]

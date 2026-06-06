@@ -150,8 +150,8 @@ fn generate_project_doc(workspace: &Path) -> String {
         "<!-- Keeping these things stable turn-over-turn saves ~90% on input tokens. -->\n",
     );
     doc.push('\n');
-    doc.push_str("- **Frequently-rebuilt files:** <!-- Generated code, lockfiles, build artifacts → mark as cache-churn -->\n");
-    doc.push_str("- **Stable scaffolding:** <!-- Config files, project instructions, model cards → keep byte-stable -->\n");
+    doc.push_str("- **Frequently-rebuilt files:** <!-- Generated code, lockfiles, build artifacts -> mark as cache-churn -->\n");
+    doc.push_str("- **Stable scaffolding:** <!-- Config files, project instructions, model cards -> keep byte-stable -->\n");
     doc.push_str("- **Append, don't reorder:** <!-- New context goes at the end of the request; reordering invalidates cache -->\n");
     doc.push('\n');
 

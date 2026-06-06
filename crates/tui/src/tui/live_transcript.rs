@@ -30,8 +30,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget, Wrap},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::palette::{self, UiTheme};
 use crate::tui::app::App;
 use crate::tui::backtrack::Direction;
 use crate::tui::history::{HistoryCell, TranscriptRenderOptions};
@@ -57,6 +58,124 @@ pub enum Mode {
 const FOOTER_HINT: &str =
     " j/k scroll  Space/C-b page  g/G top/bottom  End=resume tail  q/Esc close ";
 
+fn highlight_marker() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "> "
+    } else {
+        "\u{25B6} "
+    }
+}
+
+fn backtrack_step_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Left/Right step"
+    } else {
+        "\u{2190}/\u{2192} step"
+    }
+}
+
+fn render_ascii_live_transcript_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    footer: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(theme.text_hint)
+        .bg(theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let footer = ascii_prefix(footer, area.width.saturating_sub(4) as usize);
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &footer,
+            footer_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
+}
+
 /// Snapshot of one cell, refreshed every frame from `App`. Owns the cell so
 /// the overlay's `render(&self)` can wrap without re-borrowing `App`.
 #[derive(Debug, Clone)]
@@ -79,6 +198,8 @@ pub struct LiveTranscriptOverlay {
     /// Render options sampled from `App` at refresh time so toggles like
     /// `show_thinking` propagate into the overlay live.
     options: TranscriptRenderOptions,
+    /// UI chrome colors sampled from `App` alongside the transcript options.
+    ui_theme: UiTheme,
     /// Wrapped-line cache. `RefCell` so `render(&self)` can write through.
     cache: RefCell<TranscriptCache>,
     /// Sticky-tail flag: when `true`, refresh re-pins scroll to the bottom.
@@ -109,6 +230,7 @@ impl LiveTranscriptOverlay {
         Self {
             snapshots: Vec::new(),
             options: TranscriptRenderOptions::default(),
+            ui_theme: palette::UI_THEME,
             cache: RefCell::new(TranscriptCache::new()),
             sticky_to_bottom: Cell::new(true),
             scroll: Cell::new(0),
@@ -118,6 +240,14 @@ impl LiveTranscriptOverlay {
             mode: Mode::Tail,
             preview_pin_pending: Cell::new(false),
         }
+    }
+
+    fn update_render_context(&mut self, options: TranscriptRenderOptions, ui_theme: UiTheme) {
+        if self.options != options || self.ui_theme != ui_theme {
+            self.cache.borrow_mut().clear();
+        }
+        self.options = options;
+        self.ui_theme = ui_theme;
     }
 
     /// Switch the overlay into backtrack-preview mode. Sticky-tail is
@@ -181,7 +311,7 @@ impl LiveTranscriptOverlay {
             }
         }
         self.snapshots = new_snapshots;
-        self.options = app.transcript_render_options();
+        self.update_render_context(app.transcript_render_options(), app.ui_theme);
     }
 
     /// Wrap each cell (using the cache) and return the flat line vector.
@@ -230,7 +360,7 @@ impl LiveTranscriptOverlay {
 
             if Some(cell_idx) == highlighted_cell_idx {
                 let start = out.len();
-                out.extend(decorate_highlight(lines));
+                out.extend(decorate_highlight(lines, self.ui_theme));
                 let end = out.len();
                 if end > start {
                     highlighted_range = Some((start, end));
@@ -321,7 +451,10 @@ impl Default for LiveTranscriptOverlay {
 /// the cell visually pops out of the surrounding transcript. Internal
 /// span structure is preserved so syntax/role coloring underneath the
 /// reverse stays readable.
-fn decorate_highlight(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+fn decorate_highlight(
+    mut lines: Vec<Line<'static>>,
+    ui_theme: UiTheme,
+) -> Vec<Line<'static>> {
     if lines.is_empty() {
         return lines;
     }
@@ -331,9 +464,9 @@ fn decorate_highlight(mut lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         }
     }
     let marker = Span::styled(
-        "\u{25B6} ",
+        highlight_marker(),
         Style::default()
-            .fg(palette::TEXT_ACCENT)
+            .fg(ui_theme.accent_primary)
             .add_modifier(Modifier::BOLD),
     );
     if let Some(first) = lines.first_mut() {
@@ -541,17 +674,25 @@ impl ModalView for LiveTranscriptOverlay {
         let visible_lines: Vec<Line<'static>> = if lines.is_empty() {
             vec![Line::from(Span::styled(
                 "(no transcript yet)",
-                Style::default().fg(palette::TEXT_DIM),
+                Style::default().fg(self.ui_theme.text_dim),
             ))]
         } else {
             lines[scroll..end].to_vec()
         };
 
         let title: String = match self.mode {
-            Mode::BacktrackPreview { selected_idx } => format!(
-                " Backtrack preview — turn {} (\u{2190}/\u{2192} step, Enter rewind, Esc cancel) ",
-                selected_idx + 1
-            ),
+            Mode::BacktrackPreview { selected_idx } => {
+                let separator = if palette::ascii_ui_enabled() {
+                    "-"
+                } else {
+                    "\u{2014}"
+                };
+                format!(
+                    " Backtrack preview {separator} turn {} ({}, Enter rewind, Esc cancel) ",
+                    selected_idx + 1,
+                    backtrack_step_hint()
+                )
+            }
             Mode::Tail => {
                 if self.sticky_to_bottom.get() {
                     " Live transcript (tailing) ".to_string()
@@ -561,28 +702,42 @@ impl ModalView for LiveTranscriptOverlay {
             }
         };
 
-        let footer = Line::from(Span::styled(
-            FOOTER_HINT,
-            Style::default().fg(palette::TEXT_HINT),
-        ));
-        let block = Block::default()
-            .title(title)
-            .title_bottom(footer)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
-            .padding(Padding::uniform(1));
+        if palette::ascii_ui_enabled() {
+            let inner = render_ascii_live_transcript_chrome(
+                popup_area,
+                buf,
+                &title,
+                FOOTER_HINT,
+                self.ui_theme,
+            );
+            Paragraph::new(visible_lines)
+                .wrap(Wrap { trim: false })
+                .render(inner, buf);
+        } else {
+            let footer = Line::from(Span::styled(
+                FOOTER_HINT,
+                Style::default().fg(self.ui_theme.text_hint),
+            ));
+            let block = Block::default()
+                .title(title)
+                .title_bottom(footer)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1));
 
-        let paragraph = Paragraph::new(visible_lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        paragraph.render(popup_area, buf);
+            let paragraph = Paragraph::new(visible_lines)
+                .block(block)
+                .wrap(Wrap { trim: false });
+            paragraph.render(popup_area, buf);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use crate::tui::history::HistoryCell;
 
     fn user(s: &str) -> HistoryCell {
@@ -627,6 +782,46 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn ascii_live_transcript_chrome_uses_plain_border_chars_and_padding() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_live_transcript_chrome(
+            area,
+            &mut buf,
+            " Live transcript ",
+            FOOTER_HINT,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 实时转录 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
     }
 
     #[test]
@@ -730,6 +925,30 @@ mod tests {
     }
 
     #[test]
+    fn cache_clears_when_render_context_changes() {
+        let mut v = LiveTranscriptOverlay::new();
+        install_snapshots(&mut v, vec![user("a")]);
+        let area = Rect::new(0, 0, 60, 16);
+        let mut buf = Buffer::empty(area);
+        v.render(area, &mut buf);
+        assert!(v.cache.borrow().len() > 0);
+
+        let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        ui_theme.elevated_bg = ratatui::style::Color::Indexed(18);
+        let options = TranscriptRenderOptions {
+            theme: crate::deepseek_theme::Theme::from_ui_theme(
+                palette::ThemeId::DeepSeekShell,
+                ui_theme,
+            ),
+            ..TranscriptRenderOptions::default()
+        };
+
+        v.update_render_context(options, ui_theme);
+
+        assert_eq!(v.cache.borrow().len(), 0);
+    }
+
+    #[test]
     fn cache_invalidates_on_revision_bump() {
         let mut v = LiveTranscriptOverlay::new();
         install_snapshots(&mut v, vec![user("a"), assistant("b", true)]);
@@ -807,6 +1026,42 @@ mod tests {
         let area = Rect::new(0, 0, 40, 10);
         let mut buf = Buffer::empty(area);
         v.render(area, &mut buf);
+    }
+
+    #[test]
+    fn backtrack_preview_symbol_helpers_have_ascii_fallbacks() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(highlight_marker(), "> ");
+            assert_eq!(backtrack_step_hint(), "Left/Right step");
+        } else {
+            assert_eq!(highlight_marker(), "\u{25B6} ");
+            assert_eq!(backtrack_step_hint(), "\u{2190}/\u{2192} step");
+        }
+    }
+
+    #[test]
+    fn backtrack_preview_ascii_render_uses_plain_chrome() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut view = LiveTranscriptOverlay::new();
+        install_snapshots(&mut view, vec![user("previous request")]);
+        view.set_backtrack_preview(0);
+
+        let area = Rect::new(0, 0, 64, 12);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+        let rendered = buffer_text(&buf);
+
+        assert!(rendered.contains("Backtrack preview - turn 1"));
+        assert!(rendered.contains("Left/Right step"));
+        assert!(rendered.contains("previous request"));
+        let unicode_chrome = ['\u{2190}', '\u{2192}', '\u{25B6}', '\u{2014}'];
+        assert!(
+            !unicode_chrome
+                .iter()
+                .any(|symbol| rendered.contains(*symbol)),
+            "ASCII backtrack preview should not render Unicode chrome: {rendered:?}"
+        );
     }
 
     #[test]

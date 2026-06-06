@@ -20,6 +20,7 @@ use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthChar;
 
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tui::widgets::Renderable;
 
 /// Per-item line cap before we collapse the rest into a `…` overflow row.
@@ -44,6 +45,7 @@ pub struct PendingInputPreview {
     pub rejected_steers: Vec<String>,
     pub queued_messages: Vec<String>,
     pub edit_binding: EditBinding,
+    pub ui_theme: UiTheme,
 }
 
 /// Compact pre-send context row shown above the composer. `included=false`
@@ -67,7 +69,14 @@ impl PendingInputPreview {
             rejected_steers: Vec::new(),
             queued_messages: Vec::new(),
             edit_binding: EditBinding::UP,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn has_pending_inputs(&self) -> bool {
@@ -85,19 +94,16 @@ impl PendingInputPreview {
         }
 
         let dim = Style::default()
-            .fg(palette::TEXT_DIM)
+            .fg(self.ui_theme.text_dim)
             .add_modifier(Modifier::DIM);
         let dim_italic = dim.add_modifier(Modifier::ITALIC);
 
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         if !self.context_items.is_empty() {
-            push_section_header(
-                &mut lines,
-                Line::from(vec![Span::raw("• "), Span::raw("Context for next send")]),
-            );
+            push_section_header(&mut lines, "Context for next send", self.ui_theme);
             for item in &self.context_items {
-                push_context_item(&mut lines, item, width);
+                push_context_item(&mut lines, item, width, self.ui_theme);
             }
         }
 
@@ -105,22 +111,25 @@ impl PendingInputPreview {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
-            push_section_header(
-                &mut lines,
-                Line::from(vec![Span::raw("• "), Span::raw("Pending inputs")]),
-            );
+            push_section_header(&mut lines, "Pending inputs", self.ui_theme);
+            let item_prefix = pending_item_prefix(false);
             for steer in &self.pending_steers {
-                push_truncated_item(&mut lines, steer, width, dim, "  ↳ ", "    ");
+                push_truncated_item(&mut lines, steer, width, dim, item_prefix, "    ");
             }
             for steer in &self.rejected_steers {
-                push_truncated_item(&mut lines, steer, width, dim, "  ↳ ", "    ");
+                push_truncated_item(&mut lines, steer, width, dim, item_prefix, "    ");
             }
             for message in &self.queued_messages {
-                push_truncated_item(&mut lines, message, width, dim_italic, "  ↳ ", "    ");
+                push_truncated_item(&mut lines, message, width, dim_italic, item_prefix, "    ");
             }
             if !self.queued_messages.is_empty() {
+                let edit_label = if palette::ascii_ui_enabled() {
+                    "Up"
+                } else {
+                    self.edit_binding.label
+                };
                 lines.push(Line::from(vec![Span::styled(
-                    format!("    {} edit last queued message", self.edit_binding.label),
+                    format!("    {edit_label} edit last queued message"),
                     dim,
                 )]));
             }
@@ -154,48 +163,59 @@ impl Renderable for PendingInputPreview {
     }
 }
 
-fn push_section_header(lines: &mut Vec<Line<'static>>, header: Line<'static>) {
-    lines.push(header);
+fn push_section_header(lines: &mut Vec<Line<'static>>, header: &'static str, ui_theme: UiTheme) {
+    let style = Style::default()
+        .fg(ui_theme.accent_primary)
+        .add_modifier(Modifier::BOLD);
+    lines.push(Line::from(vec![
+        Span::styled(pending_section_prefix(), style),
+        Span::styled(header, style),
+    ]));
 }
 
-fn push_context_item(lines: &mut Vec<Line<'static>>, item: &ContextPreviewItem, width: u16) {
+fn push_context_item(
+    lines: &mut Vec<Line<'static>>,
+    item: &ContextPreviewItem,
+    width: u16,
+    ui_theme: UiTheme,
+) {
     let status_style = if item.selected {
         Style::default()
-            .fg(palette::SELECTION_TEXT)
-            .bg(palette::SELECTION_BG)
+            .fg(ui_theme.selection_text)
+            .bg(ui_theme.selection_bg)
             .add_modifier(Modifier::BOLD)
     } else if item.included {
-        Style::default().fg(palette::TEXT_MUTED)
+        Style::default().fg(ui_theme.text_muted)
     } else {
-        Style::default().fg(palette::STATUS_WARNING)
+        Style::default().fg(ui_theme.warning)
     };
     let label_style = if item.selected {
         Style::default()
-            .fg(palette::SELECTION_TEXT)
-            .bg(palette::SELECTION_BG)
+            .fg(ui_theme.selection_text)
+            .bg(ui_theme.selection_bg)
     } else if item.included {
-        Style::default().fg(palette::TEXT_PRIMARY)
+        Style::default().fg(ui_theme.text)
     } else {
-        Style::default().fg(palette::TEXT_MUTED)
+        Style::default().fg(ui_theme.text_muted)
     };
     let detail = item
         .detail
         .as_deref()
         .filter(|detail| !detail.trim().is_empty())
-        .map(|detail| format!(" · {detail}"))
+        .map(|detail| format!("{}{detail}", pending_separator()))
         .unwrap_or_default();
     let action = if item.selected {
-        " · Backspace/Delete removes"
+        format!("{}Backspace/Delete removes", pending_separator())
     } else if item.removable {
-        " · removable"
+        format!("{}removable", pending_separator())
     } else {
-        ""
+        String::new()
     };
     let body = format!("[{}] {}{}{}", item.kind, item.label, detail, action);
     let body_width = width.saturating_sub(4).max(1) as usize;
     for (idx, segment) in wrap_to_width(&body, body_width).into_iter().enumerate() {
         let prefix = if idx == 0 {
-            if item.selected { "  ▸ " } else { "  ↳ " }
+            pending_item_prefix(item.selected)
         } else {
             "    "
         };
@@ -249,16 +269,61 @@ fn push_truncated_item(
     }
     if truncated {
         lines.push(Line::from(Span::styled(
-            format!("{subsequent_indent}…"),
+            format!("{}{}", subsequent_indent, pending_overflow_marker()),
             style,
         )));
     }
 }
 
-/// Naive word-aware wrap that respects unicode display widths. Matches the
-/// behavior expected by snapshot tests in the codex source — long URL-like
-/// tokens that exceed `width` are emitted on their own row instead of being
-/// hard-broken mid-character.
+fn pending_section_prefix() -> &'static str {
+    pending_section_prefix_for_ascii(palette::ascii_ui_enabled())
+}
+
+fn pending_section_prefix_for_ascii(ascii: bool) -> &'static str {
+    if ascii {
+        "- "
+    } else {
+        "\u{2022} "
+    }
+}
+
+fn pending_item_prefix(selected: bool) -> &'static str {
+    pending_item_prefix_for_ascii(selected, palette::ascii_ui_enabled())
+}
+
+fn pending_item_prefix_for_ascii(selected: bool, ascii: bool) -> &'static str {
+    if ascii {
+        "  > "
+    } else if selected {
+        "  \u{25B8} "
+    } else {
+        "  \u{21B3} "
+    }
+}
+
+fn pending_overflow_marker() -> &'static str {
+    pending_overflow_marker_for_ascii(palette::ascii_ui_enabled())
+}
+
+fn pending_overflow_marker_for_ascii(ascii: bool) -> &'static str {
+    if ascii {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+fn pending_separator() -> &'static str {
+    pending_separator_for_ascii(palette::ascii_ui_enabled())
+}
+
+fn pending_separator_for_ascii(ascii: bool) -> &'static str {
+    if ascii { " - " } else { " \u{00B7} " }
+}
+
+/// Naive word-aware wrap that respects unicode display widths. Long URL-like
+/// tokens that exceed `width` are kept to one truncated row instead of being
+/// hard-broken into low-signal fragments or overflowing the composer layout.
 fn wrap_to_width(text: &str, width: usize) -> Vec<String> {
     if width == 0 || text.is_empty() {
         return vec![text.to_string()];
@@ -275,14 +340,13 @@ fn wrap_to_width(text: &str, width: usize) -> Vec<String> {
             current_width = 0;
         }
         if word_width > width {
-            // Token longer than the budget: flush current, emit the word as
-            // its own row even though it overflows. Avoids the codex-issue
-            // of a long URL fanning out into N junk-ellipsis rows.
+            // Token longer than the budget: flush current, then keep one
+            // readable row inside the visual budget instead of letting a URL
+            // or localized path punch through the composer layout.
             if !current.is_empty() {
                 out.push(std::mem::take(&mut current));
-                current_width = 0;
             }
-            out.push(word.trim_end().to_string());
+            out.push(truncate_to_width(word.trim_end(), width));
             continue;
         }
         current.push_str(word);
@@ -298,6 +362,44 @@ fn display_width(s: &str) -> usize {
     s.chars()
         .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
         .sum()
+}
+
+fn truncate_to_width(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if display_width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let marker = truncation_marker(max_width);
+    let marker_width = display_width(marker);
+    let budget = max_width.saturating_sub(marker_width);
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > budget {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str(marker);
+    out
+}
+
+fn truncation_marker(max_width: usize) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        match max_width {
+            0 => "",
+            1 => ".",
+            2 => "..",
+            _ => "...",
+        }
+    } else {
+        "\u{2026}"
+    }
 }
 
 #[cfg(test)]
@@ -383,7 +485,7 @@ mod tests {
             rows.iter()
                 .any(|row| row.contains("Backspace/Delete removes"))
         );
-        assert!(rows.iter().any(|row| row.contains("▸")));
+        assert!(rows.iter().any(|row| row.contains(pending_item_prefix(true))));
     }
 
     #[test]
@@ -420,7 +522,8 @@ mod tests {
         assert!(rows.iter().any(|r| r.contains("steer")));
         assert!(rows.iter().any(|r| r.contains("rejected")));
         assert!(rows.iter().any(|r| r.contains("queued")));
-        assert!(rows.iter().any(|r| r.contains("↑")));
+        let edit_label = if palette::ascii_ui_enabled() { "Up" } else { "↑" };
+        assert!(rows.iter().any(|r| r.contains(edit_label)));
     }
 
     #[test]
@@ -436,7 +539,7 @@ mod tests {
         assert!(rows[1].contains("line1"));
         assert!(rows[2].contains("line2"));
         assert!(rows[3].contains("line3"));
-        assert!(rows[4].contains("…"));
+        assert!(rows[4].contains(pending_overflow_marker()));
         assert!(rows[5].contains("edit last queued message"));
     }
 
@@ -451,7 +554,36 @@ mod tests {
         // Header + URL row + hint = 3 rows; the URL must NOT cause a chain of
         // wrapped-ellipsis rows.
         assert_eq!(rows.len(), 3, "got rows: {rows:?}");
-        assert!(!rows.iter().any(|r| r.contains("…")));
+        assert!(
+            rows.iter()
+                .all(|row| display_width(row.as_str()) <= usize::from(36_u16)),
+            "long URL row should stay within the render width: {rows:?}"
+        );
+        assert!(
+            rows[1].contains(truncation_marker(32)),
+            "long URL row should show truncation explicitly: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn long_unspaced_cjk_item_truncates_to_render_width() {
+        let mut preview = PendingInputPreview::new();
+        preview
+            .queued_messages
+            .push("修复终端布局修复终端布局修复终端布局修复终端布局".to_string());
+        let width = 18_u16;
+        let rows = render_to_string(&preview, width);
+
+        assert_eq!(rows.len(), 3, "got rows: {rows:?}");
+        assert!(
+            rows.iter()
+                .all(|row| display_width(row.as_str()) <= usize::from(width)),
+            "CJK pending input rows should stay within the render width: {rows:?}"
+        );
+        assert!(
+            rows[1].contains(truncation_marker(usize::from(width.saturating_sub(4)))),
+            "CJK row should show truncation explicitly: {rows:?}"
+        );
     }
 
     #[test]
@@ -459,5 +591,47 @@ mod tests {
         let mut preview = PendingInputPreview::new();
         preview.queued_messages.push("hi".to_string());
         assert_eq!(preview.desired_height(2), 0);
+    }
+
+    #[test]
+    fn pending_input_symbol_helpers_have_ascii_fallbacks() {
+        assert_eq!(pending_section_prefix_for_ascii(true), "- ");
+        assert_eq!(pending_item_prefix_for_ascii(false, true), "  > ");
+        assert_eq!(pending_item_prefix_for_ascii(true, true), "  > ");
+        assert_eq!(pending_overflow_marker_for_ascii(true), "...");
+        assert_eq!(pending_separator_for_ascii(true), " - ");
+        assert_eq!(pending_section_prefix_for_ascii(false), "\u{2022} ");
+        assert_eq!(pending_item_prefix_for_ascii(false, false), "  \u{21B3} ");
+        assert_eq!(pending_item_prefix_for_ascii(true, false), "  \u{25B8} ");
+        assert_eq!(pending_overflow_marker_for_ascii(false), "\u{2026}");
+        assert_eq!(pending_separator_for_ascii(false), " \u{00B7} ");
+    }
+
+    #[test]
+    fn context_preview_uses_injected_theme_colors() {
+        let mut theme = palette::UI_THEME;
+        theme.accent_primary = ratatui::style::Color::Indexed(45);
+        theme.selection_text = ratatui::style::Color::Indexed(231);
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        let mut preview = PendingInputPreview::new().with_ui_theme(theme);
+        preview.context_items.push(ContextPreviewItem {
+            kind: "image".to_string(),
+            label: "/tmp/pasted.png".to_string(),
+            detail: Some("attached media".to_string()),
+            included: true,
+            removable: true,
+            selected: true,
+        });
+
+        let lines = preview.lines(96);
+
+        assert_eq!(lines[0].spans[0].style.fg, Some(theme.accent_primary));
+        let selected_prefix = lines[1]
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref().contains(pending_item_prefix(true)))
+            .expect("selected prefix span");
+        assert_eq!(selected_prefix.style.fg, Some(theme.selection_text));
+        assert_eq!(selected_prefix.style.bg, Some(theme.selection_bg));
     }
 }

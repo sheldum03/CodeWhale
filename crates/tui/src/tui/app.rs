@@ -343,11 +343,28 @@ pub struct StatusToast {
     pub ttl_ms: Option<u64>,
 }
 
+fn transient_status_text(text: impl Into<String>) -> String {
+    crate::commands::command_text_with_ascii_fallback(text)
+}
+
+fn history_cell_text(cell: HistoryCell) -> HistoryCell {
+    match cell {
+        HistoryCell::System { content } => HistoryCell::System {
+            content: crate::commands::command_text_with_ascii_fallback(content),
+        },
+        HistoryCell::Error { message, severity } => HistoryCell::Error {
+            message: crate::commands::command_text_with_ascii_fallback(message),
+            severity,
+        },
+        other => other,
+    }
+}
+
 impl StatusToast {
     #[must_use]
     pub fn new(text: impl Into<String>, level: StatusToastLevel, ttl_ms: Option<u64>) -> Self {
         Self {
-            text: text.into(),
+            text: transient_status_text(text),
             level,
             created_at: Instant::now(),
             ttl_ms,
@@ -763,6 +780,21 @@ fn match_kitty_csi_fragment(chars: &[char], start: usize) -> Option<usize> {
 
 const MAX_SUBMITTED_INPUT_CHARS: usize = 16_000;
 const MAX_DRAFT_HISTORY: usize = 50;
+
+fn app_clause_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " \u{2014} "
+    }
+}
+
+fn large_paste_consolidated_message() -> String {
+    format!(
+        "Large paste consolidated{}auto-wrote to file and replaced with @mention. The text is still fully accessible to the model.",
+        app_clause_separator()
+    )
+}
 
 impl AppMode {
     #[must_use]
@@ -2131,7 +2163,11 @@ impl App {
             streaming_message_index: None,
             suppress_stream_events_until_turn_complete: false,
             streaming_thinking_active_entry: None,
-            streaming_state: StreamingState::new(),
+            streaming_state: {
+                let mut state = StreamingState::new();
+                state.set_ui_theme(ui_theme);
+                state
+            },
             reasoning_buffer: String::new(),
             reasoning_header: None,
             last_reasoning: None,
@@ -2363,6 +2399,7 @@ impl App {
 
     pub fn add_message(&mut self, msg: HistoryCell) {
         let rev = self.fresh_history_revision();
+        let msg = history_cell_text(msg);
         self.history.push(msg);
         self.history_revisions.push(rev);
         self.history_version = self.history_version.wrapping_add(1);
@@ -2670,6 +2707,7 @@ impl App {
     /// `app.mark_history_updated()` can collapse to one helper.
     pub fn push_history_cell(&mut self, cell: HistoryCell) {
         let rev = self.fresh_history_revision();
+        let cell = history_cell_text(cell);
         self.history.push(cell);
         self.history_revisions.push(rev);
         self.history_version = self.history_version.wrapping_add(1);
@@ -2684,6 +2722,7 @@ impl App {
     {
         for cell in cells {
             let rev = self.fresh_history_revision();
+            let cell = history_cell_text(cell);
             self.history.push(cell);
             self.history_revisions.push(rev);
         }
@@ -2985,6 +3024,7 @@ impl App {
 
         for cell in drained {
             let rev = self.fresh_history_revision();
+            let cell = history_cell_text(cell);
             self.history.push(cell);
             self.history_revisions.push(rev);
         }
@@ -3072,7 +3112,7 @@ impl App {
     pub const RECEIPT_VISIBLE_DURATION: Duration = Duration::from_secs(8);
 
     pub fn set_receipt_text(&mut self, text: impl Into<String>) {
-        self.receipt_text = Some(text.into());
+        self.receipt_text = Some(transient_status_text(text));
         self.receipt_started_at = Some(Instant::now());
         self.needs_redraw = true;
     }
@@ -3162,7 +3202,10 @@ impl App {
     }
 
     pub fn sync_status_message_to_toasts(&mut self) {
-        let current = self.status_message.clone();
+        let current = self.status_message.clone().map(transient_status_text);
+        if self.status_message != current {
+            self.status_message = current.clone();
+        }
         if self.last_status_message_seen == current {
             return;
         }
@@ -3280,6 +3323,7 @@ impl App {
             calm_mode: self.calm_mode,
             low_motion: self.low_motion,
             spacing: self.transcript_spacing,
+            theme: crate::deepseek_theme::Theme::from_ui_theme(self.theme_id, self.ui_theme),
         }
     }
 
@@ -4547,7 +4591,7 @@ impl App {
         self.input = format!("@{rel_path}");
         self.cursor_position = char_count(&self.input);
         self.push_status_toast(
-            "Large paste consolidated — auto-wrote to file and replaced with @mention. The text is still fully accessible to the model.",
+            large_paste_consolidated_message(),
             StatusToastLevel::Info,
             Some(5_000),
         );
@@ -5050,6 +5094,65 @@ mod tests {
             "阅读项目 and wait for instructions".chars().count()
         );
         assert!(app.auto_submit_initial_input);
+    }
+
+    #[test]
+    fn startup_settings_apply_deepseek_shell_theme_and_background_overlay() {
+        let _lock = lock_test_env();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config_path = tmp.path().join("config.toml");
+        std::fs::write(
+            tmp.path().join("settings.toml"),
+            "theme = \"deepseek-shell\"\nbackground_color = \"#101820\"\n",
+        )
+        .expect("settings");
+        let _config_path = EnvVarGuard::set("DEEPSEEK_CONFIG_PATH", &config_path);
+
+        let app = App::new(test_options(false), &Config::default());
+
+        assert_eq!(app.theme_id, palette::ThemeId::DeepSeekShell);
+        assert_eq!(app.ui_theme.name, "deepseek-shell");
+        assert_eq!(
+            app.ui_theme.accent_primary,
+            palette::DEEPSEEK_SHELL_UI_THEME.accent_primary
+        );
+        assert_eq!(
+            app.ui_theme.surface_bg,
+            ratatui::style::Color::Rgb(0x10, 0x18, 0x20)
+        );
+        assert_eq!(app.ui_theme.header_bg, app.ui_theme.surface_bg);
+        assert_eq!(app.ui_theme.footer_bg, app.ui_theme.surface_bg);
+        assert_eq!(
+            app.transcript_render_options().theme.variant,
+            crate::deepseek_theme::Variant::DeepSeekShell
+        );
+    }
+
+    #[test]
+    fn startup_no_animations_keeps_deepseek_shell_in_low_motion() {
+        let _lock = lock_test_env();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let config_path = tmp.path().join("config.toml");
+        std::fs::write(
+            tmp.path().join("settings.toml"),
+            "theme = \"deepseek-shell\"\nlow_motion = false\nfancy_animations = true\n",
+        )
+        .expect("settings");
+        let _config_path = EnvVarGuard::set("DEEPSEEK_CONFIG_PATH", &config_path);
+        let _no_animations = EnvVarGuard::set("NO_ANIMATIONS", "1");
+
+        let app = App::new(test_options(false), &Config::default());
+        let transcript_options = app.transcript_render_options();
+
+        assert_eq!(app.theme_id, palette::ThemeId::DeepSeekShell);
+        assert_eq!(app.ui_theme.name, "deepseek-shell");
+        assert!(app.low_motion);
+        assert!(!app.fancy_animations);
+        assert!(transcript_options.low_motion);
+        assert_eq!(
+            transcript_options.theme.variant,
+            crate::deepseek_theme::Variant::DeepSeekShell
+        );
     }
 
     #[test]
@@ -5766,6 +5869,20 @@ mod tests {
     }
 
     #[test]
+    fn large_paste_consolidated_message_has_ascii_separator_fallback() {
+        crate::palette::set_ascii_ui_for_tests(Some(false));
+        let unicode = large_paste_consolidated_message();
+        assert!(unicode.contains("consolidated \u{2014} auto-wrote"));
+
+        crate::palette::set_ascii_ui_for_tests(Some(true));
+        let ascii = large_paste_consolidated_message();
+        assert!(ascii.contains("consolidated - auto-wrote"));
+        assert!(!ascii.contains('\u{2014}'));
+
+        crate::palette::set_ascii_ui_for_tests(None);
+    }
+
+    #[test]
     fn paste_defers_oversized_text_consolidation_until_submit() {
         // #2168: a large paste stays inline so the user can still edit it.
         // Submit-time consolidation then writes the paste file and sends the
@@ -5805,7 +5922,7 @@ mod tests {
         assert!(
             app.status_toasts
                 .iter()
-                .any(|toast| toast.text.contains("consolidated")),
+                .any(|toast| toast.text == large_paste_consolidated_message()),
             "expected consolidation toast after submit"
         );
     }
@@ -6831,6 +6948,90 @@ mod tests {
             app.needs_redraw,
             "receipt expiry should repaint composer chrome"
         );
+    }
+
+    #[test]
+    fn receipt_text_uses_ascii_fallback_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = App::new(test_options(false), &Config::default());
+        app.set_receipt_text("✓ turn completed · 2 tool(s) used");
+        assert_eq!(
+            app.active_receipt_text(),
+            Some("+ turn completed - 2 tool(s) used")
+        );
+    }
+
+    #[test]
+    fn status_toast_text_uses_ascii_fallback_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let toast = StatusToast::new(
+            "⚠ retrying — network degraded",
+            StatusToastLevel::Warning,
+            Some(1_000),
+        );
+        assert_eq!(toast.text, "Warning retrying - network degraded");
+    }
+
+    #[test]
+    fn status_message_sync_normalizes_ascii_fallback() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = App::new(test_options(false), &Config::default());
+        app.status_message = Some("queued ✓ · check".to_string());
+        app.sync_status_message_to_toasts();
+        assert_eq!(app.status_message.as_deref(), Some("queued + - check"));
+        assert_eq!(
+            app.status_toasts.back().map(|toast| toast.text.as_str()),
+            Some("queued + - check")
+        );
+    }
+
+    #[test]
+    fn system_history_message_uses_ascii_fallback_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = App::new(test_options(false), &Config::default());
+        app.add_message(HistoryCell::System {
+            content: format!("ready {} done {} follow", '\u{2713}', '\u{2192}'),
+        });
+
+        let Some(HistoryCell::System { content }) = app.history.last() else {
+            panic!("expected system history cell");
+        };
+        assert_eq!(content, "ready + done -> follow");
+    }
+
+    #[test]
+    fn error_history_message_uses_ascii_fallback_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = App::new(test_options(false), &Config::default());
+        app.push_history_cell(HistoryCell::Error {
+            message: format!("{} retry {} network", '\u{26A0}', '\u{2014}'),
+            severity: crate::error_taxonomy::ErrorSeverity::Warning,
+        });
+
+        let Some(HistoryCell::Error { message, .. }) = app.history.last() else {
+            panic!("expected error history cell");
+        };
+        assert_eq!(message, "Warning retry - network");
+    }
+
+    #[test]
+    fn extend_history_normalizes_system_messages_when_ascii_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let mut app = App::new(test_options(false), &Config::default());
+        app.extend_history([HistoryCell::System {
+            content: format!("summary {} details", '\u{2026}'),
+        }]);
+
+        let Some(HistoryCell::System { content }) = app.history.last() else {
+            panic!("expected system history cell");
+        };
+        assert_eq!(content, "summary ... details");
     }
 
     #[test]

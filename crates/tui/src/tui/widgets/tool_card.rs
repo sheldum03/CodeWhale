@@ -41,6 +41,8 @@ pub enum ToolFamily {
     Fanout,
     /// Recursive language model work. `⋮⋮ rlm`.
     Rlm,
+    /// Planning and strategy updates. `◇ plan`.
+    Plan,
     /// Verification gates, tests, and validators. `✓ verify`.
     Verify,
     /// Reasoning / chain-of-thought. `… think`. Reasoning has its own
@@ -65,7 +67,8 @@ pub fn tool_family_for_title(title: &str) -> ToolFamily {
         "Patch" | "Diff" => ToolFamily::Patch,
         "Workspace" | "Image" => ToolFamily::Read,
         "Search" => ToolFamily::Find,
-        "Plan" | "Review" => ToolFamily::Generic,
+        "Review" => ToolFamily::Verify,
+        "Plan" => ToolFamily::Plan,
         _ => ToolFamily::Generic,
     }
 }
@@ -77,20 +80,103 @@ pub fn tool_family_for_title(title: &str) -> ToolFamily {
 #[must_use]
 pub fn tool_family_for_name(name: &str) -> ToolFamily {
     match name {
-        "read_file" | "list_dir" | "view_image" => ToolFamily::Read,
-        "edit_file" | "apply_patch" | "write_file" => ToolFamily::Patch,
+        "read_file"
+        | "list_dir"
+        | "view_image"
+        | "handle_read"
+        | "image_ocr"
+        | "project_map"
+        | "retrieve_tool_result"
+        | "task_list"
+        | "task_read"
+        | "pr_attempt_list"
+        | "pr_attempt_read"
+        | "github_issue_context"
+        | "github_pr_context"
+        | "get_goal"
+        | "checklist_list"
+        | "todo_list"
+        | "load_skill" => ToolFamily::Read,
+        "edit_file"
+        | "apply_patch"
+        | "write_file"
+        | "fim_edit"
+        | "pandoc_convert"
+        | "remember"
+        | "note"
+        | "github_comment"
+        | "github_close_issue"
+        | "github_close_pr"
+        | "slop_ledger_append"
+        | "slop_ledger_update" => ToolFamily::Patch,
         "exec_shell"
         | "exec_shell_wait"
         | "exec_shell_interact"
         | "exec_shell_cancel"
+        | "exec_wait"
+        | "exec_interact"
         | "task_shell_start"
-        | "task_shell_wait" => ToolFamily::Run,
-        "grep_files" | "file_search" | "web_search" | "fetch_url" => ToolFamily::Find,
-        "agent_open" | "agent_eval" | "agent_close" | "agent_spawn" | "tool_agent" => {
+        | "task_shell_wait"
+        | "automation_run" => ToolFamily::Run,
+        "grep_files"
+        | "file_search"
+        | "web_search"
+        | "fetch_url"
+        | "web.run"
+        | "finance"
+        | "git_status"
+        | "git_log"
+        | "git_show"
+        | "git_blame"
+        | "slop_ledger_query"
+        | "slop_ledger_export" => ToolFamily::Find,
+        "agent_open"
+        | "agent_eval"
+        | "agent_close"
+        | "agent_spawn"
+        | "tool_agent"
+        | "agent_result"
+        | "agent_cancel"
+        | "resume_agent"
+        | "agent_list"
+        | "agent_send_input"
+        | "send_input"
+        | "agent_assign"
+        | "agent_wait"
+        | "delegate_to_agent" => {
             ToolFamily::Delegate
         }
+        "multi_tool_use.parallel" => ToolFamily::Fanout,
         "rlm_open" | "rlm_eval" | "rlm_configure" | "rlm_close" | "rlm" => ToolFamily::Rlm,
-        "run_tests" | "run_verifiers" | "task_gate_run" | "validate_data" => ToolFamily::Verify,
+        "rlm_session_objects" => ToolFamily::Read,
+        "update_plan"
+        | "create_goal"
+        | "update_goal"
+        | "task_create"
+        | "task_cancel"
+        | "pr_attempt_record"
+        | "automation_create"
+        | "automation_list"
+        | "automation_read"
+        | "automation_update"
+        | "automation_pause"
+        | "automation_resume"
+        | "automation_delete"
+        | "checklist_write"
+        | "checklist_add"
+        | "checklist_update"
+        | "todo_write"
+        | "todo_add"
+        | "todo_update"
+        | "request_user_input" => ToolFamily::Plan,
+        "run_tests"
+        | "run_verifiers"
+        | "task_gate_run"
+        | "validate_data"
+        | "diagnostics"
+        | "git_diff"
+        | "pr_attempt_preflight"
+        | "review" => ToolFamily::Verify,
         _ => ToolFamily::Generic,
     }
 }
@@ -135,6 +221,7 @@ pub fn tool_header_summary_for_name(name: &str, input_summary: Option<&str>) -> 
         ToolFamily::Delegate | ToolFamily::Fanout | ToolFamily::Rlm => {
             ["prompt", "task", "model"].as_slice()
         }
+        ToolFamily::Plan => ["explanation", "step", "task", "plan"].as_slice(),
         ToolFamily::Verify => ["profile", "level", "command", "args", "path"].as_slice(),
         ToolFamily::Think | ToolFamily::Generic => {
             ["query", "path", "command", "prompt"].as_slice()
@@ -169,6 +256,34 @@ fn summary_value(summary: &str, key: &str) -> Option<String> {
 /// in `render_tool_header` stays simple (one cell wide).
 #[must_use]
 pub fn family_glyph(family: ToolFamily) -> &'static str {
+    family_glyph_for_ascii_mode(family, crate::palette::ascii_ui_enabled())
+}
+
+#[must_use]
+fn family_glyph_for_ascii_mode(family: ToolFamily, ascii: bool) -> &'static str {
+    if ascii {
+        return family_ascii_glyph(family);
+    }
+    family_unicode_glyph(family)
+}
+
+fn family_ascii_glyph(family: ToolFamily) -> &'static str {
+    match family {
+        ToolFamily::Read => ">",
+        ToolFamily::Patch => "*",
+        ToolFamily::Run => ">",
+        ToolFamily::Find => "?",
+        ToolFamily::Delegate => "@",
+        ToolFamily::Fanout => ">>",
+        ToolFamily::Rlm => "::",
+        ToolFamily::Plan => "=",
+        ToolFamily::Verify => "+",
+        ToolFamily::Think => "...",
+        ToolFamily::Generic => "*",
+    }
+}
+
+fn family_unicode_glyph(family: ToolFamily) -> &'static str {
     match family {
         ToolFamily::Read => "\u{25B7}",           // ▷
         ToolFamily::Patch => "\u{25C6}",          // ◆
@@ -177,6 +292,7 @@ pub fn family_glyph(family: ToolFamily) -> &'static str {
         ToolFamily::Delegate => "\u{25D0}",       // ◐
         ToolFamily::Fanout => "\u{22EE}\u{22EE}", // ⋮⋮ (two cells)
         ToolFamily::Rlm => "\u{22EE}\u{22EE}",    // ⋮⋮ (two cells)
+        ToolFamily::Plan => "\u{25C7}",           // ◇
         ToolFamily::Verify => "\u{2713}",
         ToolFamily::Think => "\u{2026}",   // …
         ToolFamily::Generic => "\u{2022}", // •
@@ -196,6 +312,7 @@ pub fn family_label(family: ToolFamily) -> &'static str {
         ToolFamily::Delegate => "delegate",
         ToolFamily::Fanout => "fanout",
         ToolFamily::Rlm => "rlm",
+        ToolFamily::Plan => "plan",
         ToolFamily::Verify => "verify",
         ToolFamily::Think => "think",
         ToolFamily::Generic => "tool",
@@ -222,6 +339,17 @@ pub enum CardRail {
 #[must_use]
 #[allow(dead_code)] // wired by future card-refactor follow-ups
 pub fn rail_glyph(rail: CardRail) -> &'static str {
+    rail_glyph_for_ascii_mode(rail, crate::palette::ascii_ui_enabled())
+}
+
+#[must_use]
+pub fn rail_glyph_for_ascii_mode(rail: CardRail, ascii: bool) -> &'static str {
+    if ascii {
+        return match rail {
+            CardRail::Top | CardRail::Middle | CardRail::Bottom => "|",
+            CardRail::Single => "",
+        };
+    }
     match rail {
         CardRail::Top => "\u{256D}",    // ╭
         CardRail::Middle => "\u{2502}", // │
@@ -233,7 +361,8 @@ pub fn rail_glyph(rail: CardRail) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        CardRail, ToolFamily, family_glyph, family_label, rail_glyph, tool_activity_label_for_name,
+        CardRail, ToolFamily, family_ascii_glyph, family_glyph, family_glyph_for_ascii_mode,
+        family_label, rail_glyph, rail_glyph_for_ascii_mode, tool_activity_label_for_name,
         tool_display_label_for_name, tool_family_for_name, tool_family_for_title,
         tool_header_summary_for_name,
     };
@@ -245,7 +374,8 @@ mod tests {
         assert_eq!(tool_family_for_title("Workspace"), ToolFamily::Read);
         assert_eq!(tool_family_for_title("Search"), ToolFamily::Find);
         assert_eq!(tool_family_for_title("Diff"), ToolFamily::Patch);
-        assert_eq!(tool_family_for_title("Plan"), ToolFamily::Generic);
+        assert_eq!(tool_family_for_title("Review"), ToolFamily::Verify);
+        assert_eq!(tool_family_for_title("Plan"), ToolFamily::Plan);
         assert_eq!(tool_family_for_title("unknown title"), ToolFamily::Generic);
     }
 
@@ -254,11 +384,30 @@ mod tests {
         assert_eq!(tool_family_for_name("read_file"), ToolFamily::Read);
         assert_eq!(tool_family_for_name("apply_patch"), ToolFamily::Patch);
         assert_eq!(tool_family_for_name("exec_shell"), ToolFamily::Run);
+        assert_eq!(tool_family_for_name("exec_wait"), ToolFamily::Run);
         assert_eq!(tool_family_for_name("task_shell_start"), ToolFamily::Run);
         assert_eq!(tool_family_for_name("grep_files"), ToolFamily::Find);
+        assert_eq!(tool_family_for_name("web.run"), ToolFamily::Find);
+        assert_eq!(tool_family_for_name("finance"), ToolFamily::Find);
+        assert_eq!(tool_family_for_name("git_status"), ToolFamily::Find);
+        assert_eq!(tool_family_for_name("git_diff"), ToolFamily::Verify);
         assert_eq!(tool_family_for_name("agent_open"), ToolFamily::Delegate);
+        assert_eq!(tool_family_for_name("delegate_to_agent"), ToolFamily::Delegate);
+        assert_eq!(
+            tool_family_for_name("multi_tool_use.parallel"),
+            ToolFamily::Fanout
+        );
         assert_eq!(tool_family_for_name("rlm_eval"), ToolFamily::Rlm);
+        assert_eq!(tool_family_for_name("rlm_session_objects"), ToolFamily::Read);
+        assert_eq!(tool_family_for_name("update_plan"), ToolFamily::Plan);
+        assert_eq!(tool_family_for_name("checklist_write"), ToolFamily::Plan);
+        assert_eq!(tool_family_for_name("task_create"), ToolFamily::Plan);
+        assert_eq!(tool_family_for_name("automation_pause"), ToolFamily::Plan);
+        assert_eq!(tool_family_for_name("github_pr_context"), ToolFamily::Read);
+        assert_eq!(tool_family_for_name("github_comment"), ToolFamily::Patch);
+        assert_eq!(tool_family_for_name("fim_edit"), ToolFamily::Patch);
         assert_eq!(tool_family_for_name("run_verifiers"), ToolFamily::Verify);
+        assert_eq!(tool_family_for_name("pr_attempt_preflight"), ToolFamily::Verify);
         assert_eq!(
             tool_family_for_name("totally_new_tool"),
             ToolFamily::Generic
@@ -268,6 +417,7 @@ mod tests {
     #[test]
     fn tool_display_label_collapses_known_tools_to_user_verbs() {
         assert_eq!(tool_display_label_for_name("exec_shell"), "run");
+        assert_eq!(tool_display_label_for_name("update_plan"), "plan");
         assert_eq!(tool_display_label_for_name("run_verifiers"), "verify");
         assert_eq!(tool_display_label_for_name("file_search"), "find");
         assert_eq!(
@@ -276,6 +426,7 @@ mod tests {
         );
 
         assert_eq!(tool_activity_label_for_name("exec_shell"), "run");
+        assert_eq!(tool_activity_label_for_name("update_plan"), "plan");
         assert_eq!(tool_activity_label_for_name("run_verifiers"), "verify");
         assert_eq!(
             tool_activity_label_for_name("future_private_tool"),
@@ -306,6 +457,11 @@ mod tests {
             Some("auto")
         );
         assert_eq!(
+            tool_header_summary_for_name("update_plan", Some("step: ship visual refresh"))
+                .as_deref(),
+            Some("ship visual refresh")
+        );
+        assert_eq!(
             tool_header_summary_for_name("unknown", Some("alpha: beta")).as_deref(),
             Some("alpha: beta")
         );
@@ -322,6 +478,7 @@ mod tests {
             ToolFamily::Delegate,
             ToolFamily::Fanout,
             ToolFamily::Rlm,
+            ToolFamily::Plan,
             ToolFamily::Verify,
             ToolFamily::Think,
             ToolFamily::Generic,
@@ -338,10 +495,48 @@ mod tests {
     }
 
     #[test]
+    fn ascii_family_glyphs_are_plain_ascii() {
+        for family in [
+            ToolFamily::Read,
+            ToolFamily::Patch,
+            ToolFamily::Run,
+            ToolFamily::Find,
+            ToolFamily::Delegate,
+            ToolFamily::Fanout,
+            ToolFamily::Rlm,
+            ToolFamily::Plan,
+            ToolFamily::Verify,
+            ToolFamily::Think,
+            ToolFamily::Generic,
+        ] {
+            let glyph = family_ascii_glyph(family);
+            assert!(
+                glyph.is_ascii(),
+                "family {family:?} has non-ascii fallback glyph {glyph:?}",
+            );
+            assert_eq!(family_glyph_for_ascii_mode(family, true), glyph);
+        }
+    }
+
+    #[test]
     fn card_rail_glyphs_form_a_box() {
-        assert_eq!(rail_glyph(CardRail::Top), "\u{256D}");
-        assert_eq!(rail_glyph(CardRail::Middle), "\u{2502}");
-        assert_eq!(rail_glyph(CardRail::Bottom), "\u{2570}");
-        assert!(rail_glyph(CardRail::Single).is_empty());
+        assert_eq!(rail_glyph_for_ascii_mode(CardRail::Top, false), "\u{256D}");
+        assert_eq!(
+            rail_glyph_for_ascii_mode(CardRail::Middle, false),
+            "\u{2502}"
+        );
+        assert_eq!(
+            rail_glyph_for_ascii_mode(CardRail::Bottom, false),
+            "\u{2570}"
+        );
+        assert!(rail_glyph_for_ascii_mode(CardRail::Single, false).is_empty());
+        assert_eq!(rail_glyph_for_ascii_mode(CardRail::Top, true), "|");
+        assert_eq!(rail_glyph_for_ascii_mode(CardRail::Middle, true), "|");
+        assert_eq!(rail_glyph_for_ascii_mode(CardRail::Bottom, true), "|");
+        assert!(rail_glyph_for_ascii_mode(CardRail::Single, true).is_empty());
+        assert_eq!(
+            rail_glyph(CardRail::Top),
+            rail_glyph_for_ascii_mode(CardRail::Top, crate::palette::ascii_ui_enabled())
+        );
     }
 }

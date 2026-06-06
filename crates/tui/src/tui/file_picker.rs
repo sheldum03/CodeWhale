@@ -22,10 +22,28 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Widget},
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 use crate::workspace_discovery::{DISCOVERY_ALWAYS_DIRS, path_is_excluded_from_discovery};
+
+fn file_picker_nav_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Up/Down"
+    } else {
+        "\u{2191}/\u{2193}"
+    }
+}
+
+fn file_picker_ellipsis() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
 
 /// Maximum number of candidates collected from the initial walk. Keeps memory
 /// bounded for very large monorepos; matches the limits codex-rs uses for the
@@ -123,6 +141,7 @@ pub struct FilePickerView {
     selected: usize,
     /// Top of the visible window within `filtered`.
     scroll: usize,
+    ui_theme: UiTheme,
 }
 
 impl FilePickerView {
@@ -156,9 +175,16 @@ impl FilePickerView {
             query: String::new(),
             selected: 0,
             scroll: 0,
+            ui_theme: palette::UI_THEME,
         };
         view.refilter();
         view
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn refilter(&mut self) {
@@ -338,38 +364,50 @@ impl ModalView for FilePickerView {
         let title = Line::from(vec![Span::styled(
             " File Picker ",
             Style::default()
-                .fg(palette::DEEPSEEK_BLUE)
+                .fg(self.ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )]);
         let footer_text = format!(
-            " {} match{}  ↑/↓ select  Enter insert @path  Esc close ",
+            " {} match{}  {} select  Enter insert @path  Esc close ",
             self.filtered.len(),
             if self.filtered.len() == 1 { "" } else { "es" },
+            file_picker_nav_hint(),
         );
-        let block = Block::default()
-            .title(title)
-            .title_bottom(Line::from(Span::styled(
-                footer_text,
-                Style::default().fg(palette::TEXT_MUTED),
-            )))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
-            .padding(Padding::uniform(1));
+        let inner = if palette::ascii_ui_enabled() {
+            render_ascii_file_picker_chrome(
+                popup_area,
+                buf,
+                " File Picker ",
+                &footer_text,
+                self.ui_theme,
+            )
+        } else {
+            let block = Block::default()
+                .title(title)
+                .title_bottom(Line::from(Span::styled(
+                    footer_text,
+                    Style::default().fg(self.ui_theme.text_muted),
+                )))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1));
 
-        let inner = block.inner(popup_area);
-        block.render(popup_area, buf);
+            let inner = block.inner(popup_area);
+            block.render(popup_area, buf);
+            inner
+        };
 
         let mut lines: Vec<Line<'static>> = Vec::new();
         // Query line.
         lines.push(Line::from(vec![
-            Span::styled("> ", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
+            Span::styled("> ", Style::default().fg(self.ui_theme.accent_primary).bold()),
             Span::raw(self.query.clone()),
             Span::styled(
                 " ",
                 Style::default()
-                    .fg(palette::DEEPSEEK_INK)
-                    .bg(palette::DEEPSEEK_SKY),
+                    .fg(self.ui_theme.surface_bg)
+                    .bg(self.ui_theme.accent_primary),
             ),
         ]));
         lines.push(Line::from(""));
@@ -379,7 +417,7 @@ impl ModalView for FilePickerView {
         if self.filtered.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  No matches",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )));
         } else {
             for idx in self.scroll..end {
@@ -387,18 +425,19 @@ impl ModalView for FilePickerView {
                 let selected = idx == self.selected;
                 let style = if selected {
                     Style::default()
-                        .fg(palette::SELECTION_TEXT)
-                        .bg(palette::SELECTION_BG)
+                        .fg(self.ui_theme.selection_text)
+                        .bg(self.ui_theme.selection_bg)
                 } else {
-                    Style::default().fg(palette::TEXT_PRIMARY)
+                    Style::default().fg(self.ui_theme.text_body)
                 };
-                let prefix = if selected { "▶ " } else { "  " };
+                let prefix = file_picker_prefix(selected);
                 let marker_field = if inner.width >= 18 {
                     format!("{} ", self.relevance.markers_for(path))
                 } else {
                     String::new()
                 };
-                let reserved = prefix.chars().count() + marker_field.chars().count();
+                let reserved =
+                    UnicodeWidthStr::width(prefix) + UnicodeWidthStr::width(marker_field.as_str());
                 let display = truncate_path(path, (inner.width as usize).saturating_sub(reserved));
                 let mut line = Line::from(format!("{prefix}{marker_field}{display}"));
                 line.style = style;
@@ -407,8 +446,120 @@ impl ModalView for FilePickerView {
         }
 
         Paragraph::new(lines)
-            .style(Style::default().fg(palette::TEXT_PRIMARY))
+            .style(Style::default().fg(self.ui_theme.text_body))
             .render(inner, buf);
+    }
+}
+
+fn render_ascii_file_picker_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    footer: &str,
+    theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .add_modifier(Modifier::BOLD);
+    let footer_style = Style::default()
+        .fg(theme.text_muted)
+        .bg(theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if area.width > 8 && area.height > 1 {
+        let footer = ascii_prefix(footer, area.width.saturating_sub(4) as usize);
+        buf.set_string(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            &footer,
+            footer_style,
+        );
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
+}
+
+fn file_picker_prefix(selected: bool) -> &'static str {
+    if !selected {
+        "  "
+    } else if palette::ascii_ui_enabled() {
+        "> "
+    } else {
+        "\u{25B6} "
     }
 }
 
@@ -416,19 +567,40 @@ fn truncate_path(path: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }
-    if path.chars().count() <= max {
+    if UnicodeWidthStr::width(path) <= max {
         return path.to_string();
     }
-    let take = max.saturating_sub(1);
-    let truncated: String = path
-        .chars()
-        .rev()
-        .take(take)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("…{truncated}")
+
+    let ellipsis = file_picker_ellipsis();
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    if ellipsis_width >= max {
+        return ellipsis
+            .chars()
+            .scan(0usize, |width, ch| {
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if *width + ch_width > max {
+                    None
+                } else {
+                    *width += ch_width;
+                    Some(ch)
+                }
+            })
+            .collect();
+    }
+
+    let suffix_width = max.saturating_sub(ellipsis_width);
+    let mut tail = Vec::new();
+    let mut width = 0usize;
+    for ch in path.chars().rev() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > suffix_width {
+            break;
+        }
+        tail.push(ch);
+        width += ch_width;
+    }
+    let truncated: String = tail.into_iter().rev().collect();
+    format!("{}{truncated}", file_picker_ellipsis())
 }
 
 /// Single-pass walk that collects workspace-relative paths. `max_depth` of
@@ -590,6 +762,7 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn score_subsequence_match() {
@@ -736,6 +909,85 @@ mod tests {
         let mut view = FilePickerView::new_with_relevance(root, FilePickerRelevance::default());
         let action = view.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(matches!(action, ViewAction::Close));
+    }
+
+    #[test]
+    fn file_picker_prefix_has_ascii_fallback() {
+        assert_eq!(file_picker_prefix(false), "  ");
+        let selected = file_picker_prefix(true);
+        if palette::ascii_ui_enabled() {
+            assert_eq!(selected, "> ");
+        } else {
+            assert_eq!(selected, "\u{25B6} ");
+        }
+    }
+
+    #[test]
+    fn file_picker_ellipsis_has_ascii_fallback() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(file_picker_ellipsis(), "...");
+        } else {
+            assert_eq!(file_picker_ellipsis(), "\u{2026}");
+        }
+    }
+
+    #[test]
+    fn truncate_path_respects_cjk_display_width() {
+        let path = "src/界面/非常长的文件名.rs";
+        let truncated = truncate_path(path, 12);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 12,
+            "truncated path overflowed display width: {truncated:?}"
+        );
+        assert!(
+            truncated.starts_with(file_picker_ellipsis()),
+            "truncated path should keep leading ellipsis: {truncated:?}"
+        );
+        assert!(
+            truncated.ends_with(".rs"),
+            "truncated path should preserve the useful suffix: {truncated:?}"
+        );
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 文件选择器 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
+
+    #[test]
+    fn ascii_file_picker_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_file_picker_chrome(
+            area,
+            &mut buf,
+            " File Picker ",
+            " Up/Down select Enter insert ",
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
     }
 
     #[test]

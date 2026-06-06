@@ -9,7 +9,7 @@
 use crate::hooks::HookEvent;
 use crate::tui::app::App;
 
-use super::CommandResult;
+use super::{CommandResult, command_ellipsis, command_text_separator};
 
 /// Top-level dispatch for `/hooks`. Subcommands:
 ///
@@ -73,7 +73,11 @@ fn events() -> CommandResult {
         ),
     ];
     for (event, desc) in ordered {
-        out.push_str(&format!("  - `{}` — {desc}\n", event_label(event)));
+        out.push_str(&format!(
+            "  - `{}`{}{desc}\n",
+            event_label(event),
+            command_text_separator()
+        ));
     }
     CommandResult::message(out.trim_end().to_string())
 }
@@ -87,14 +91,15 @@ fn list(app: &App) -> CommandResult {
     }
 
     let mut out = String::new();
+    let enabled_label = if config.enabled {
+        "yes".to_string()
+    } else {
+        format!("no{}all hooks suppressed", command_text_separator())
+    };
     out.push_str(&format!(
         "{} configured hook(s) (global enabled: {}):\n\n",
         config.hooks.len(),
-        if config.enabled {
-            "yes"
-        } else {
-            "no — all hooks suppressed"
-        }
+        enabled_label,
     ));
 
     let mut by_event: std::collections::BTreeMap<&str, Vec<&crate::hooks::Hook>> =
@@ -129,9 +134,10 @@ fn list(app: &App) -> CommandResult {
     }
 
     if !config.enabled {
-        out.push_str(
-            "Hooks are globally disabled — set `[hooks].enabled = true` in `config.toml` to fire them.\n",
-        );
+        out.push_str(&format!(
+            "Hooks are globally disabled{}set `[hooks].enabled = true` in `config.toml` to fire them.\n",
+            command_text_separator()
+        ));
     }
 
     CommandResult::message(out.trim_end().to_string())
@@ -186,11 +192,16 @@ fn preview_command(command: &str, max_chars: usize) -> String {
     if single_line.chars().count() <= max_chars {
         return single_line;
     }
+    let marker = command_ellipsis();
+    let marker_len = marker.chars().count();
+    if max_chars <= marker_len {
+        return marker.chars().take(max_chars).collect();
+    }
     let mut out: String = single_line
         .chars()
-        .take(max_chars.saturating_sub(1))
+        .take(max_chars.saturating_sub(marker_len))
         .collect();
-    out.push('…');
+    out.push_str(marker);
     out
 }
 
@@ -198,12 +209,19 @@ fn preview_command(command: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::hooks::{Hook, HookCondition};
+    use crate::test_support::EnvVarGuard;
 
     #[test]
     fn preview_command_truncates_to_cap() {
         let cmd = "x".repeat(200);
         assert_eq!(preview_command(&cmd, 10).chars().count(), 10);
-        assert!(preview_command(&cmd, 10).ends_with('…'));
+        assert!(preview_command(&cmd, 10).ends_with(command_ellipsis()));
+    }
+
+    #[test]
+    fn preview_command_respects_tiny_cap() {
+        let cmd = "x".repeat(200);
+        assert_eq!(preview_command(&cmd, 1).chars().count(), 1);
     }
 
     #[test]
@@ -297,6 +315,18 @@ mod tests {
         // Each event line includes the descriptive blurb.
         assert!(body.contains("fires once when the TUI launches"));
         assert!(body.contains("read-only observer"));
+    }
+
+    #[test]
+    fn events_subcommand_uses_ascii_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let result = events();
+        let body = result.message.expect("non-empty body");
+
+        assert!(body.contains("`session_start` - fires once"));
+        assert!(!body.contains('\u{2014}'), "got: {body}");
     }
 
     #[test]

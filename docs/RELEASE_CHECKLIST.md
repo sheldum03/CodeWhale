@@ -54,14 +54,46 @@ Run, in order, from the repo root:
       can race in parallel. Document confirmed flakes in `Known issues`.)
 - [ ] `./scripts/release/publish-crates.sh dry-run`
 
-## 4. npm wrapper smoke
+## 4. TUI visual QA
+
+Run these checks when the release contains TUI theme, layout, snapshot, or
+terminal-compatibility changes:
+
+- [ ] Start the TUI and verify `/theme deepseek-shell` applies the opt-in
+      DeepSeek Shell theme without replacing the default `system` theme.
+- [ ] Switch back with `/theme system` and verify the old theme path still
+      renders header, footer, composer, history, and tool cards normally.
+- [ ] Verify the main screen at 80 columns and at a wide desktop terminal:
+      header/footer fit on one row, composer text does not overlap chrome, and
+      history/tool-card content remains scannable.
+- [ ] In `deepseek-shell`, verify user, assistant, system, tool, warning, and
+      error states are visually distinct in the transcript and transient
+      status surfaces.
+- [ ] Exercise at least one long command/path/tool summary and one localized
+      or CJK row in a fixed-width UI surface. Tool-card headers, picker rows,
+      sidebar summaries, decision cards, and footer/status text must truncate
+      by display width rather than overflowing their borders.
+- [ ] Run with `CODEWHALE_ASCII_UI=1` and verify prompt, rails, borders,
+      status markers, footer chips, tool-card glyphs, and transient status
+      messages are plain ASCII.
+- [ ] Run with `NO_ANIMATIONS=1` or equivalent low-motion settings and verify
+      header, footer, terminal title, thinking, and streaming states remain
+      readable without animated chrome.
+- [ ] Confirm the user-facing docs explain enable, rollback, and display
+      troubleshooting: `/theme deepseek-shell`, `theme = "deepseek-shell"`,
+      `/theme system`, `CODEWHALE_ASCII_UI=1`, low-motion settings, and the
+      80-column check.
+- [ ] Review and intentionally update render/snapshot tests for expected visual
+      changes; unexpected old-theme snapshot churn is a release blocker.
+
+## 5. npm wrapper smoke
 
 - [ ] `cargo build --release --locked -p codewhale-cli -p codewhale-tui`
 - [ ] `node scripts/release/npm-wrapper-smoke.js`
       (Set `DEEPSEEK_TUI_KEEP_SMOKE_DIR=1` if you need to inspect the temp
       install afterwards.)
 
-## 5. Branch and PR
+## 6. Branch and PR
 
 - [ ] Branch is pushed: `git push -u origin work/vX.Y.Z-...`
 - [ ] PR opened with `gh pr create --base main --title "chore(release): prepare vX.Y.Z"`
@@ -75,13 +107,13 @@ Run, in order, from the repo root:
       attack details in the title. Save those for the GitHub release notes
       after the tag is pushed.
 
-## 6. CI green and review
+## 7. CI green and review
 
 - [ ] All required CI jobs are green. The `versions` job should mirror the
       preflight `check-versions.sh` and is your last line of defense.
 - [ ] PR has been reviewed.
 
-## 7. Tag and release (after review)
+## 8. Tag and release (after review)
 
 - [ ] `git tag -s vX.Y.Z -m "vX.Y.Z"`
 - [ ] `git push origin vX.Y.Z`
@@ -101,7 +133,7 @@ Run, in order, from the repo root:
       pushed it).
 - [ ] `ghcr.io/hmbown/codewhale:vX.Y.Z` and `:latest` are updated.
 
-## 8. Post-tag
+## 9. Post-tag
 
 - [ ] Edit the GitHub release notes to expand any CVE-style or attack
       details that were intentionally omitted from the PR title/body.

@@ -517,7 +517,7 @@ pub fn tool_from_override(
         }
         ToolOverride::Command { command, args } => {
             // Build a description that includes the command.
-            let description = format!("Override for '{tool_name}' — runs: {command}");
+            let description = command_override_description(tool_name, command);
             let cmd_args = args.clone().unwrap_or_default();
 
             Some(Arc::new(CommandPluginTool {
@@ -530,6 +530,19 @@ pub fn tool_from_override(
             }) as Arc<dyn ToolSpec>)
         }
     }
+}
+
+fn command_override_description(tool_name: &str, command: &str) -> String {
+    command_override_description_with_ascii(
+        tool_name,
+        command,
+        crate::palette::ascii_ui_enabled(),
+    )
+}
+
+fn command_override_description_with_ascii(tool_name: &str, command: &str, ascii: bool) -> String {
+    let separator = if ascii { " - " } else { " — " };
+    format!("Override for '{tool_name}'{separator}runs: {command}")
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +573,18 @@ echo hello
         assert_eq!(
             meta.input_schema,
             serde_json::json!({"type":"object","properties":{"input":{"type":"string"}}})
+        );
+    }
+
+    #[test]
+    fn command_override_description_uses_ascii_separator_when_enabled() {
+        assert_eq!(
+            command_override_description_with_ascii("run_lint", "cargo clippy", true),
+            "Override for 'run_lint' - runs: cargo clippy"
+        );
+        assert_eq!(
+            command_override_description_with_ascii("run_lint", "cargo clippy", false),
+            "Override for 'run_lint' — runs: cargo clippy"
         );
     }
 

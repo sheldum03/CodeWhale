@@ -15,7 +15,8 @@ use crate::tui::history::HistoryCell;
 use crate::tui::scrolling::{ScrollDirection, TranscriptScroll};
 use crate::tui::selection::{SelectionAutoscroll, TranscriptSelectionPoint};
 use crate::tui::ui_text::{
-    history_cell_to_text, line_to_plain, slice_text, text_display_width, truncate_line_to_width,
+    history_cell_to_text_with_options, line_to_plain, slice_text, text_display_width,
+    truncate_line_to_width,
 };
 use crate::tui::views::{ContextMenuAction, HelpView, ModalKind, ViewEvent};
 
@@ -586,7 +587,8 @@ pub(crate) fn open_context_menu(app: &mut App, mouse: MouseEvent) {
         mouse.column,
         mouse.row,
         title,
-    ));
+    )
+    .with_ui_theme(app.ui_theme));
     app.needs_redraw = true;
 }
 
@@ -730,19 +732,23 @@ pub(crate) fn handle_context_menu_action(app: &mut App, action: ContextMenuActio
         }
         ContextMenuAction::OpenCommandPalette => {
             app.view_stack
-                .push(CommandPaletteView::new(build_command_palette_entries(
-                    app.ui_locale,
-                    &app.skills_dir,
-                    &app.workspace,
-                    &app.mcp_config_path,
-                    app.mcp_snapshot.as_ref(),
-                )));
+                .push(
+                    CommandPaletteView::new(build_command_palette_entries(
+                        app.ui_locale,
+                        &app.skills_dir,
+                        &app.workspace,
+                        &app.mcp_config_path,
+                        app.mcp_snapshot.as_ref(),
+                    ))
+                    .with_ui_theme(app.ui_theme),
+                );
         }
         ContextMenuAction::OpenContextInspector => {
             open_context_inspector(app);
         }
         ContextMenuAction::OpenHelp => {
-            app.view_stack.push(HelpView::new_for_locale(app.ui_locale));
+            app.view_stack
+                .push(HelpView::new_for_locale(app.ui_locale).with_ui_theme(app.ui_theme));
         }
         ContextMenuAction::OpenFileAtLine { cell_index } => {
             let width = app
@@ -750,12 +756,13 @@ pub(crate) fn handle_context_menu_action(app: &mut App, action: ContextMenuActio
                 .last_transcript_area
                 .map(|area| area.width)
                 .unwrap_or(80);
-            let text = history_cell_to_text(
-                app.cell_at_virtual_index(cell_index)
-                    .unwrap_or(&HistoryCell::System {
-                        content: String::new(),
-                    }),
+            let fallback = HistoryCell::System {
+                content: String::new(),
+            };
+            let text = history_cell_to_text_with_options(
+                app.cell_at_virtual_index(cell_index).unwrap_or(&fallback),
                 width,
+                app.transcript_render_options(),
             );
             if crate::tui::history::try_open_file_at_line(&text, &app.workspace) {
                 app.status_message = Some("Opened file in editor".to_string());

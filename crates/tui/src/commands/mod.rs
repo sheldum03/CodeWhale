@@ -37,6 +37,132 @@ use std::fmt::Write as _;
 use crate::localization::{Locale, MessageId, tr};
 use crate::tui::app::{App, AppAction};
 
+const COMMAND_RULE_WIDTH: usize = 29;
+
+pub(crate) fn command_rule() -> String {
+    let ch = if crate::palette::ascii_ui_enabled() {
+        '-'
+    } else {
+        '\u{2500}'
+    };
+    std::iter::repeat(ch).take(COMMAND_RULE_WIDTH).collect()
+}
+
+pub(crate) fn command_section_heading(title: &str) -> String {
+    if crate::palette::ascii_ui_enabled() {
+        format!("-- {title}")
+    } else {
+        format!("\u{2500}\u{2500} {title}")
+    }
+}
+
+pub(crate) fn command_ellipsis() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
+pub(crate) fn command_missing_marker() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{2014}"
+    }
+}
+
+pub(crate) fn command_text_separator() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " \u{2014} "
+    }
+}
+
+pub(crate) fn command_bullet() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{2022}"
+    }
+}
+
+pub(crate) fn command_text_with_ascii_fallback(text: impl Into<String>) -> String {
+    let text = text.into();
+    if !crate::palette::ascii_ui_enabled() {
+        return text;
+    }
+    text.replace('\u{2500}', "-")
+        .replace('\u{2501}', "-")
+        .replace('\u{2502}', "|")
+        .replace('\u{2503}', "|")
+        .replace('\u{2506}', ":")
+        .replace('\u{2507}', ":")
+        .replace('\u{250C}', "+")
+        .replace('\u{2510}', "+")
+        .replace('\u{2514}', "+")
+        .replace('\u{2518}', "+")
+        .replace('\u{256D}', "+")
+        .replace('\u{256E}', "+")
+        .replace('\u{2570}', "+")
+        .replace('\u{256F}', "+")
+        .replace('\u{2014}', "-")
+        .replace('\u{2026}', "...")
+        .replace('\u{2022}', "-")
+        .replace('\u{00B7}', "-")
+        .replace('\u{238B}', "Esc")
+        .replace('\u{2192}', "->")
+        .replace('\u{2190}', "<-")
+        .replace('\u{2191}', "Up")
+        .replace('\u{2193}', "Down")
+        .replace('\u{21B5}', "Enter")
+        .replace('\u{2325}', "alt")
+        .replace('\u{2315}', "?")
+        .replace('\u{27F3}', ">")
+        .replace('\u{23FB}', "*")
+        .replace('\u{23F3}', ">")
+        .replace('\u{21B3}', ">")
+        .replace('\u{22EE}', "|")
+        .replace('\u{2298}', "!")
+        .replace('\u{25B0}', "#")
+        .replace('\u{25B1}', "-")
+        .replace('\u{25B6}', ">")
+        .replace('\u{25B7}', ">")
+        .replace('\u{25B8}', ">")
+        .replace('\u{25C6}', "*")
+        .replace('\u{25C7}', "=")
+        .replace('\u{25CF}', "*")
+        .replace('\u{25CD}', "o")
+        .replace('\u{25CE}', "*")
+        .replace('\u{25D0}', "~")
+        .replace('\u{25CB}', "o")
+        .replace('\u{25E6}', ":")
+        .replace('\u{2610}', "[ ]")
+        .replace('\u{2611}', "[x]")
+        .replace('\u{2612}', "[x]")
+        .replace('\u{254E}', ":")
+        .replace('\u{2571}', "/")
+        .replace('\u{2572}', "\\")
+        .replace('\u{258E}', ">")
+        .replace('\u{258F}', "|")
+        .replace('\u{2713}', "+")
+        .replace('\u{2717}', "x")
+        .replace('\u{2726}', "+")
+        .replace('\u{276F}', ">")
+        .replace('\u{00D7}', "x")
+        .replace('\u{26A0}', "Warning")
+}
+
+pub(crate) fn command_rule_with_width(width: usize) -> String {
+    let ch = if crate::palette::ascii_ui_enabled() {
+        '-'
+    } else {
+        '\u{2500}'
+    };
+    std::iter::repeat(ch).take(width).collect()
+}
+
 /// Result of executing a command
 #[derive(Debug, Clone)]
 pub struct CommandResult {
@@ -61,7 +187,7 @@ impl CommandResult {
     /// Create a result with just a message
     pub fn message(msg: impl Into<String>) -> Self {
         Self {
-            message: Some(msg.into()),
+            message: Some(command_text_with_ascii_fallback(msg.into())),
             action: None,
             is_error: false,
         }
@@ -80,7 +206,7 @@ impl CommandResult {
     #[allow(dead_code)]
     pub fn with_message_and_action(msg: impl Into<String>, action: AppAction) -> Self {
         Self {
-            message: Some(msg.into()),
+            message: Some(command_text_with_ascii_fallback(msg.into())),
             action: Some(action),
             is_error: false,
         }
@@ -89,7 +215,10 @@ impl CommandResult {
     /// Create an error message result
     pub fn error(msg: impl Into<String>) -> Self {
         Self {
-            message: Some(format!("Error: {}", msg.into())),
+            message: Some(command_text_with_ascii_fallback(format!(
+                "Error: {}",
+                msg.into()
+            ))),
             action: None,
             is_error: true,
         }
@@ -1076,6 +1205,7 @@ fn suggest_command_names(input: &str, limit: usize) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::config::{ApiProvider, Config};
+    use crate::test_support::EnvVarGuard;
     use crate::tools::plan::{PlanItemArg, StepStatus, UpdatePlanArgs};
     use crate::tools::todo::TodoStatus;
     use crate::tui::app::{App, AppAction, TuiOptions};
@@ -1116,6 +1246,58 @@ mod tests {
         assert!(COMMANDS.iter().any(|cmd| cmd.name == "memory"));
         assert!(!COMMANDS.iter().any(|cmd| cmd.name == "set"));
         assert!(!COMMANDS.iter().any(|cmd| cmd.name == "deepseek"));
+    }
+
+    #[test]
+    fn command_rule_follows_ascii_mode() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        assert_eq!(command_rule(), "-".repeat(COMMAND_RULE_WIDTH));
+        assert_eq!(command_section_heading("Title"), "-- Title");
+        assert_eq!(command_ellipsis(), "...");
+        assert_eq!(command_missing_marker(), "-");
+        assert_eq!(command_text_separator(), " - ");
+        assert_eq!(command_bullet(), "-");
+        assert_eq!(
+            command_text_with_ascii_fallback(
+                concat!(
+                    "\u{256D}\u{2500}\u{256E} \u{2502} \u{2503} ",
+                    "\u{2570}\u{2500}\u{256F} \u{2026} \u{2022} \u{00B7} ",
+                    "a \u{2192} b \u{2190} c \u{2713} \u{2717} \u{00D7} ",
+                    "\u{26A0} \u{27F3} \u{23FB} \u{23F3} \u{21B3} \u{25B8} \u{25B6} ",
+                    "\u{25CF} \u{25CB} \u{2191} \u{2193} \u{258E} \u{258F} ",
+                    "\u{254E} \u{25E6} \u{25D0} \u{2298} \u{25B7} \u{25C6} ",
+                    "\u{2315} \u{22EE}\u{22EE} \u{276F} \u{238B} \u{25B0}\u{25B1} ",
+                    "\u{21B5} \u{2325}\u{2191} \u{25CE} \u{25C7} \u{2571}\u{2572} \u{2726} ",
+                    "\u{2506} \u{2507} \u{25CD} \u{2610} \u{2611} \u{2612}"
+                )
+            ),
+            "+-+ | | +-+ ... - - a -> b <- c + x x Warning > * > > > > * o Up Down > | : : ~ ! > * ? || > Esc #- Enter altUp * = /\\ + : : o [ ] [x] [x]"
+        );
+        assert_eq!(command_rule_with_width(3), "---");
+    }
+
+    #[test]
+    fn command_result_messages_apply_ascii_fallback() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let result = CommandResult::message("✓ completed · a → b …");
+
+        assert_eq!(result.message.as_deref(), Some("+ completed - a -> b ..."));
+    }
+
+    #[test]
+    fn command_result_errors_apply_ascii_fallback() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        let result = CommandResult::error("⚠ failed — inspect details");
+
+        assert_eq!(
+            result.message.as_deref(),
+            Some("Error: Warning failed - inspect details")
+        );
     }
 
     #[test]
@@ -1218,6 +1400,26 @@ mod tests {
             panic!("expected SendMessage action");
         };
         assert!(message.contains("Requested relay focus: next hand"));
+    }
+
+    #[test]
+    fn theme_command_help_mentions_deepseek_shell_and_system_return_path() {
+        let theme = COMMANDS
+            .iter()
+            .find(|cmd| cmd.name == "theme")
+            .expect("theme command should exist");
+
+        for locale in [Locale::En, Locale::ZhHans] {
+            let description = theme.description_for(locale);
+            assert!(
+                description.contains("deepseek-shell"),
+                "{locale:?} theme help should mention deepseek-shell: {description}"
+            );
+            assert!(
+                description.contains("system"),
+                "{locale:?} theme help should mention system return path: {description}"
+            );
+        }
     }
 
     #[test]

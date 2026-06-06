@@ -4,8 +4,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Widget, Wrap};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::palette;
+use crate::palette::UiTheme;
 use crate::tools::plan::PlanSnapshot;
 use crate::tui::views::{ModalKind, ModalView, ViewAction, ViewEvent};
 
@@ -25,14 +27,14 @@ const PLAN_OPTIONS: [(&str, &str); 4] = [
     ),
 ];
 
-fn modal_block() -> Block<'static> {
+fn modal_block(ui_theme: UiTheme) -> Block<'static> {
     Block::default()
         .title(Line::from(vec![Span::styled(
             " Plan Confirmation ",
-            Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
+            Style::default().fg(ui_theme.accent_primary).bold(),
         )]))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(palette::BORDER_COLOR))
+        .border_style(Style::default().fg(ui_theme.border))
         .padding(Padding::uniform(1))
 }
 
@@ -67,19 +69,20 @@ fn push_option_lines(
     number: usize,
     label: &str,
     description: &str,
+    ui_theme: UiTheme,
 ) {
     let row_style = if selected {
         Style::default()
-            .fg(palette::SELECTION_TEXT)
-            .bg(palette::SELECTION_BG)
+            .fg(ui_theme.selection_text)
+            .bg(ui_theme.selection_bg)
             .bold()
     } else {
-        Style::default().fg(palette::TEXT_PRIMARY)
+        Style::default().fg(ui_theme.text_body)
     };
     let detail_style = if selected {
         row_style
     } else {
-        Style::default().fg(palette::TEXT_MUTED)
+        Style::default().fg(ui_theme.text_muted)
     };
     let prefix = if selected { ">" } else { " " };
 
@@ -93,16 +96,33 @@ fn push_option_lines(
     )));
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlanPromptView {
     selected: usize,
     /// The plan snapshot to display (if update_plan was called).
     plan: Option<PlanSnapshot>,
+    ui_theme: UiTheme,
+}
+
+impl Default for PlanPromptView {
+    fn default() -> Self {
+        Self::new(None)
+    }
 }
 
 impl PlanPromptView {
     pub fn new(plan: Option<PlanSnapshot>) -> Self {
-        Self { selected: 0, plan }
+        Self {
+            selected: 0,
+            plan,
+            ui_theme: palette::UI_THEME,
+        }
+    }
+
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn max_index(&self) -> usize {
@@ -191,11 +211,11 @@ impl ModalView for PlanPromptView {
         let mut lines: Vec<Line> = Vec::new();
         lines.push(Line::from(vec![Span::styled(
             "Action required",
-            Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+            Style::default().fg(self.ui_theme.accent_primary).bold(),
         )]));
         lines.push(Line::from(vec![Span::styled(
             "Choose what should happen after this plan.",
-            Style::default().fg(palette::TEXT_PRIMARY).bold(),
+            Style::default().fg(self.ui_theme.text_body).bold(),
         )]));
         lines.push(Line::from(""));
 
@@ -205,7 +225,7 @@ impl ModalView for PlanPromptView {
                 for line in wrap_text(explanation, 68) {
                     lines.push(Line::from(Span::styled(
                         line,
-                        Style::default().fg(palette::TEXT_MUTED),
+                        Style::default().fg(self.ui_theme.text_muted),
                     )));
                 }
                 lines.push(Line::from(""));
@@ -213,17 +233,13 @@ impl ModalView for PlanPromptView {
             if !plan.items.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "Plan steps:",
-                    Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                    Style::default().fg(self.ui_theme.accent_primary).bold(),
                 )));
                 for item in &plan.items {
-                    let status_mark = match item.status {
-                        crate::tools::plan::StepStatus::Pending => "\u{b7}",
-                        crate::tools::plan::StepStatus::InProgress => "\u{25b6}",
-                        crate::tools::plan::StepStatus::Completed => "\u{2713}",
-                    };
+                    let status_mark = plan_step_status_mark(item.status);
                     lines.push(Line::from(Span::styled(
                         format!("  {status_mark} {}", item.step),
-                        Style::default().fg(palette::TEXT_PRIMARY),
+                        Style::default().fg(self.ui_theme.text_body),
                     )));
                 }
                 lines.push(Line::from(""));
@@ -232,39 +248,152 @@ impl ModalView for PlanPromptView {
 
         for (idx, (label, description)) in PLAN_OPTIONS.iter().enumerate() {
             let number = idx + 1;
-            push_option_lines(&mut lines, self.selected == idx, number, label, description);
+            push_option_lines(
+                &mut lines,
+                self.selected == idx,
+                number,
+                label,
+                description,
+                self.ui_theme,
+            );
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled(
                 "1-4 / a / y / r / q",
-                Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                Style::default().fg(self.ui_theme.accent_primary).bold(),
             ),
-            Span::styled(" quick pick", Style::default().fg(palette::TEXT_MUTED)),
+            Span::styled(" quick pick", Style::default().fg(self.ui_theme.text_muted)),
             Span::raw("  "),
-            Span::styled("Up/Down", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-            Span::styled(" move", Style::default().fg(palette::TEXT_MUTED)),
+            Span::styled("Up/Down", Style::default().fg(self.ui_theme.accent_primary).bold()),
+            Span::styled(" move", Style::default().fg(self.ui_theme.text_muted)),
             Span::raw("  "),
-            Span::styled("Enter", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-            Span::styled(" confirm", Style::default().fg(palette::TEXT_MUTED)),
+            Span::styled("Enter", Style::default().fg(self.ui_theme.accent_primary).bold()),
+            Span::styled(" confirm", Style::default().fg(self.ui_theme.text_muted)),
             Span::raw("  "),
-            Span::styled("Esc", Style::default().fg(palette::DEEPSEEK_SKY).bold()),
-            Span::styled(" close", Style::default().fg(palette::TEXT_MUTED)),
+            Span::styled("Esc", Style::default().fg(self.ui_theme.accent_primary).bold()),
+            Span::styled(" close", Style::default().fg(self.ui_theme.text_muted)),
         ]));
-
-        let paragraph = Paragraph::new(lines)
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true })
-            .block(modal_block());
 
         let popup_area = centered_rect(72, 52, area);
         render_modal_chrome(area, popup_area, buf);
-        paragraph.render(popup_area, buf);
+        if palette::ascii_ui_enabled() {
+            let inner = render_ascii_plan_prompt_chrome(popup_area, buf, self.ui_theme);
+            Paragraph::new(lines)
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
+        } else {
+            Paragraph::new(lines)
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: true })
+                .block(modal_block(self.ui_theme))
+                .render(popup_area, buf);
+        }
     }
 }
 
-/// Wrap text into lines no wider than `width` characters.
+fn render_ascii_plan_prompt_chrome(area: Rect, buf: &mut Buffer, theme: UiTheme) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(theme.surface_bg);
+    let border_style = Style::default().fg(theme.border).bg(theme.surface_bg);
+    let title_style = Style::default()
+        .fg(theme.accent_primary)
+        .bg(theme.surface_bg)
+        .bold();
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(
+            " Plan Confirmation ",
+            area.width.saturating_sub(4) as usize,
+        );
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
+}
+
+fn plan_step_status_mark(status: crate::tools::plan::StepStatus) -> &'static str {
+    let ascii = palette::ascii_ui_enabled();
+    match (status, ascii) {
+        (crate::tools::plan::StepStatus::Pending, true) => ".",
+        (crate::tools::plan::StepStatus::InProgress, true) => ">",
+        (crate::tools::plan::StepStatus::Completed, true) => "+",
+        (crate::tools::plan::StepStatus::Pending, false) => "\u{b7}",
+        (crate::tools::plan::StepStatus::InProgress, false) => "\u{25b6}",
+        (crate::tools::plan::StepStatus::Completed, false) => "\u{2713}",
+    }
+}
+
+/// Wrap text into lines no wider than `width` terminal display columns.
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_string()];
@@ -277,35 +406,56 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
         }
         let words: Vec<&str> = paragraph.split_whitespace().collect();
         let mut current = String::new();
+        let mut current_width = 0usize;
         for word in words {
-            let word_width = word.chars().count();
+            let word_width = UnicodeWidthStr::width(word);
             if word_width > width {
                 if !current.is_empty() {
-                    lines.push(current.trim_end().to_string());
-                    current.clear();
+                    lines.push(std::mem::take(&mut current));
+                    current_width = 0;
                 }
-                let mut chars = word.chars();
-                loop {
-                    let segment: String = chars.by_ref().take(width).collect();
-                    if segment.is_empty() {
-                        break;
-                    }
+                for segment in split_word_by_display_width(word, width) {
                     lines.push(segment);
                 }
-            } else if current.chars().count() + 1 + word_width > width {
-                lines.push(current.trim_end().to_string());
-                current.clear();
+            } else if current_width + usize::from(!current.is_empty()) + word_width > width {
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
                 current.push_str(word);
+                current_width = word_width;
             } else {
                 if !current.is_empty() {
                     current.push(' ');
+                    current_width += 1;
                 }
                 current.push_str(word);
+                current_width += word_width;
             }
         }
         if !current.is_empty() {
-            lines.push(current.trim_end().to_string());
+            lines.push(current);
         }
+    }
+    lines
+}
+
+fn split_word_by_display_width(word: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for ch in word.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if !current.is_empty() && current_width + ch_width > width {
+            lines.push(current);
+            current = String::new();
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
     }
     lines
 }
@@ -333,6 +483,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     fn render_view(view: &PlanPromptView, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
@@ -364,5 +515,90 @@ mod tests {
 
         assert!(rendered.contains("> 2) Accept plan (YOLO)"));
         assert!(rendered.contains("Start implementation in YOLO mode (auto-approve)"));
+    }
+
+    #[test]
+    fn plan_step_status_marks_follow_ascii_mode() {
+        use crate::tools::plan::StepStatus;
+
+        let pending = plan_step_status_mark(StepStatus::Pending);
+        let running = plan_step_status_mark(StepStatus::InProgress);
+        let completed = plan_step_status_mark(StepStatus::Completed);
+
+        if palette::ascii_ui_enabled() {
+            assert_eq!((pending, running, completed), (".", ">", "+"));
+        } else {
+            assert_eq!(
+                (pending, running, completed),
+                ("\u{b7}", "\u{25b6}", "\u{2713}")
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_text_respects_cjk_display_width() {
+        let lines = wrap_text("计划步骤需要保持宽字符不溢出", 12);
+
+        assert!(
+            lines.len() > 1,
+            "wide CJK text should wrap across multiple display-width rows: {lines:?}"
+        );
+        for line in lines {
+            assert!(
+                UnicodeWidthStr::width(line.as_str()) <= 12,
+                "line overflowed display width: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_text_splits_long_unspaced_words_by_display_width() {
+        let lines = wrap_text("alphaβeta路径路径omega", 10);
+
+        assert!(
+            lines.len() > 1,
+            "long unspaced text should split by display width: {lines:?}"
+        );
+        for line in lines {
+            assert!(
+                UnicodeWidthStr::width(line.as_str()) <= 10,
+                "line overflowed display width: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ascii_plan_prompt_chrome_uses_plain_border_chars() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner =
+            render_ascii_plan_prompt_chrome(area, &mut buf, palette::DEEPSEEK_SHELL_UI_THEME);
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 计划确认 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
     }
 }

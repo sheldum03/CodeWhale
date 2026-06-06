@@ -355,7 +355,9 @@ pub fn export(app: &mut App, path: Option<&str>) -> CommandResult {
 pub fn sessions(app: &mut App, arg: Option<&str>) -> CommandResult {
     let trimmed = arg.unwrap_or("").trim();
     if trimmed.is_empty() {
-        app.view_stack.push(SessionPickerView::new(&app.workspace));
+        app.view_stack.push(
+            SessionPickerView::new(&app.workspace).with_ui_theme(app.ui_theme),
+        );
         return CommandResult::ok();
     }
 
@@ -364,7 +366,9 @@ pub fn sessions(app: &mut App, arg: Option<&str>) -> CommandResult {
     match action.as_str() {
         "prune" => prune(app, parts.next()),
         "show" | "list" | "picker" => {
-            app.view_stack.push(SessionPickerView::new(&app.workspace));
+            app.view_stack.push(
+                SessionPickerView::new(&app.workspace).with_ui_theme(app.ui_theme),
+            );
             CommandResult::ok()
         }
         _ => CommandResult::error(format!(
@@ -443,6 +447,7 @@ mod tests {
     use crate::config::{Config, DEFAULT_TEXT_MODEL};
     use crate::test_support::EnvVarGuard;
     use crate::tui::app::{App, ReasoningEffort, TuiOptions, TurnCacheRecord};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
     use std::time::Instant;
     use tempfile::TempDir;
 
@@ -946,6 +951,8 @@ mod tests {
     fn test_sessions_pushes_picker_view() {
         let tmpdir = TempDir::new().unwrap();
         let mut app = create_test_app_with_tmpdir(&tmpdir);
+        let bg = Color::Rgb(1, 2, 3);
+        app.ui_theme = app.ui_theme.with_background_color(bg);
         let initial_kind = app.view_stack.top_kind();
 
         let result = sessions(&mut app, None);
@@ -953,6 +960,14 @@ mod tests {
         assert!(result.action.is_none());
         // View should have changed (session picker should be on top)
         assert_ne!(app.view_stack.top_kind(), initial_kind);
+
+        let area = Rect::new(0, 0, 100, 32);
+        let mut buf = Buffer::empty(area);
+        app.view_stack.render(area, &mut buf);
+        assert!(
+            buf.content().iter().any(|cell| cell.bg == bg),
+            "session picker should render with the app ui_theme background"
+        );
     }
 
     #[test]

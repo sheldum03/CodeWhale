@@ -63,6 +63,24 @@ pub(crate) const SUPPORTED_TARGET_FORMATS: &[&str] = &[
 /// the converted text inline.
 pub struct PandocConvertTool;
 
+fn pandoc_summary(
+    source: &std::path::Path,
+    target_format: &str,
+    output: &std::path::Path,
+) -> String {
+    let arrow = if crate::palette::ascii_ui_enabled() {
+        "->"
+    } else {
+        "\u{2192}"
+    };
+    format!(
+        "Converted {} {arrow} {} via pandoc; wrote {}",
+        source.display(),
+        target_format,
+        output.display()
+    )
+}
+
 #[async_trait]
 impl ToolSpec for PandocConvertTool {
     fn name(&self) -> &'static str {
@@ -177,12 +195,7 @@ impl ToolSpec for PandocConvertTool {
         }
 
         let summary = if let Some(out) = resolved_output_path {
-            format!(
-                "Converted {} → {} via pandoc; wrote {}",
-                source_path.display(),
-                target_format,
-                out.display()
-            )
+            pandoc_summary(&source_path, target_format, &out)
         } else {
             let text = String::from_utf8_lossy(&output.stdout).to_string();
             return Ok(ToolResult::success(text));
@@ -202,6 +215,7 @@ pub(crate) fn format_is_binary(target_format: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
     use std::fs;
     use tempfile::tempdir;
 
@@ -242,6 +256,21 @@ mod tests {
         ] {
             assert!(!format_is_binary(fmt));
         }
+    }
+
+    #[test]
+    fn pandoc_summary_uses_ascii_arrow_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let summary = pandoc_summary(
+            std::path::Path::new("note.md"),
+            "html",
+            std::path::Path::new("out.html"),
+        );
+        assert_eq!(
+            summary,
+            "Converted note.md -> html via pandoc; wrote out.html"
+        );
     }
 
     #[tokio::test]

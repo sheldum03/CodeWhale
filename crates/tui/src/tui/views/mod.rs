@@ -1,11 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{buffer::Buffer, layout::Rect};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use std::cell::{Cell, RefCell};
 use std::fmt;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::{ApiProvider, Config};
 use crate::localization::{Locale, MessageId, tr};
-use crate::palette;
+use crate::palette::{self, UiTheme};
 use crate::settings::Settings;
 use crate::tools::UserInputResponse;
 use crate::tools::subagent::{SubAgentAssignment, SubAgentResult, SubAgentStatus, SubAgentType};
@@ -16,6 +17,147 @@ use crate::tui::widgets::agent_card::AgentLifecycle;
 
 pub mod mode_picker;
 pub mod status_picker;
+
+fn scroll_nav_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Up/Down"
+    } else {
+        "\u{2191}\u{2193}"
+    }
+}
+
+fn modal_summary_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "  |  "
+    } else {
+        "  \u{00B7}  "
+    }
+}
+
+fn config_editor_move_hint() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "Left/Right=move"
+    } else {
+        "\u{2190}/\u{2192}=move"
+    }
+}
+
+fn subagent_steps_suffix() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "*"
+    } else {
+        "\u{2726}"
+    }
+}
+
+fn ascii_modal_inner(area: Rect) -> Rect {
+    Rect {
+        x: area.x.saturating_add(2),
+        y: area.y.saturating_add(2),
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(4),
+    }
+}
+
+fn render_ascii_views_modal_chrome(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    footer: Option<&str>,
+    ui_theme: UiTheme,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect {
+            x: area.x,
+            y: area.y,
+            width: 0,
+            height: 0,
+        };
+    }
+
+    let fill_style = Style::default().bg(ui_theme.surface_bg);
+    let border_style = Style::default()
+        .fg(ui_theme.border)
+        .bg(ui_theme.surface_bg);
+    let title_style = Style::default()
+        .fg(ui_theme.accent_primary)
+        .bg(ui_theme.surface_bg);
+    let footer_style = Style::default()
+        .fg(ui_theme.text_muted)
+        .bg(ui_theme.surface_bg);
+
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, y)].set_symbol(" ").set_style(fill_style);
+        }
+    }
+
+    if area.width > 1 {
+        let bottom = area.y + area.height.saturating_sub(1);
+        for x in area.x..area.x.saturating_add(area.width) {
+            buf[(x, area.y)].set_symbol("-").set_style(border_style);
+            buf[(x, bottom)].set_symbol("-").set_style(border_style);
+        }
+    }
+
+    if area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        for y in area.y..area.y.saturating_add(area.height) {
+            buf[(area.x, y)].set_symbol("|").set_style(border_style);
+            buf[(right, y)].set_symbol("|").set_style(border_style);
+        }
+    }
+
+    if area.width > 1 && area.height > 1 {
+        let right = area.x + area.width.saturating_sub(1);
+        let bottom = area.y + area.height.saturating_sub(1);
+        for (x, y) in [
+            (area.x, area.y),
+            (right, area.y),
+            (area.x, bottom),
+            (right, bottom),
+        ] {
+            buf[(x, y)].set_symbol("+").set_style(border_style);
+        }
+    }
+
+    if area.width > 4 {
+        let title = ascii_prefix(title, area.width.saturating_sub(4) as usize);
+        buf.set_string(area.x + 2, area.y, &title, title_style);
+    }
+    if let Some(footer) = footer {
+        if area.width > 8 && area.height > 1 {
+            let footer = ascii_prefix(footer, area.width.saturating_sub(4) as usize);
+            buf.set_string(
+                area.x + 2,
+                area.y + area.height.saturating_sub(1),
+                &footer,
+                footer_style,
+            );
+        }
+    }
+
+    ascii_modal_inner(area)
+}
+
+fn ascii_prefix(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+
+    let mut width = 0usize;
+    text.chars()
+        .take_while(|ch| {
+            let ch_width = UnicodeWidthChar::width(*ch).unwrap_or(0);
+            if width + ch_width > max_width {
+                false
+            } else {
+                width += ch_width;
+                true
+            }
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalKind {
@@ -380,13 +522,20 @@ impl ShellControlChoice {
 
 pub struct ShellControlView {
     selected: ShellControlChoice,
+    ui_theme: UiTheme,
 }
 
 impl ShellControlView {
     pub fn new() -> Self {
         Self {
             selected: ShellControlChoice::Background,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 
     fn toggle(&mut self) {
@@ -447,10 +596,10 @@ impl ModalView for ShellControlView {
             let selected = self.selected == choice;
             let style = if selected {
                 Style::default()
-                    .fg(palette::SELECTION_TEXT)
-                    .bg(palette::SELECTION_BG)
+                    .fg(self.ui_theme.selection_text)
+                    .bg(self.ui_theme.selection_bg)
             } else {
-                Style::default().fg(palette::TEXT_PRIMARY)
+                Style::default().fg(self.ui_theme.text_body)
             };
             Line::from(vec![
                 Span::styled(if selected { "> " } else { "  " }, style),
@@ -462,7 +611,7 @@ impl ModalView for ShellControlView {
         let lines = vec![
             Line::from(Span::styled(
                 "Foreground shell command is still running.",
-                Style::default().fg(palette::TEXT_PRIMARY),
+                Style::default().fg(self.ui_theme.text_body),
             )),
             Line::from(""),
             option_line(
@@ -477,25 +626,38 @@ impl ModalView for ShellControlView {
             ),
         ];
 
-        let view = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(Line::from(vec![Span::styled(
-                        " Shell command ",
-                        Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
-                    )]))
-                    .title_bottom(Line::from(Span::styled(
-                        " Enter select | Esc close ",
-                        Style::default().fg(palette::TEXT_MUTED),
-                    )))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(palette::BORDER_COLOR))
-                    .style(Style::default().bg(palette::DEEPSEEK_INK))
-                    .padding(Padding::uniform(1)),
-            )
-            .style(Style::default().fg(palette::TEXT_PRIMARY));
+        if palette::ascii_ui_enabled() {
+            let inner = render_ascii_views_modal_chrome(
+                popup_area,
+                buf,
+                " Shell command ",
+                Some(" Enter select | Esc close "),
+                self.ui_theme,
+            );
+            Paragraph::new(lines)
+                .style(Style::default().fg(self.ui_theme.text_body))
+                .render(inner, buf);
+        } else {
+            let view = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title(Line::from(vec![Span::styled(
+                            " Shell command ",
+                            Style::default().fg(self.ui_theme.accent_primary).bold(),
+                        )]))
+                        .title_bottom(Line::from(Span::styled(
+                            " Enter select | Esc close ",
+                            Style::default().fg(self.ui_theme.text_muted),
+                        )))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(self.ui_theme.border))
+                        .style(Style::default().bg(self.ui_theme.surface_bg))
+                        .padding(Padding::uniform(1)),
+                )
+                .style(Style::default().fg(self.ui_theme.text_body));
 
-        view.render(popup_area, buf);
+            view.render(popup_area, buf);
+        }
     }
 }
 
@@ -578,6 +740,7 @@ pub struct ConfigView {
     filter: String,
     status: Option<String>,
     locale: Locale,
+    ui_theme: UiTheme,
     effective_cost_currency: String,
     last_visible_rows: Cell<usize>,
     last_row_hitboxes: RefCell<Vec<(u16, usize)>>,
@@ -867,6 +1030,7 @@ impl ConfigView {
             filter: String::new(),
             status: None,
             locale: app.ui_locale,
+            ui_theme: app.ui_theme,
             effective_cost_currency: cost_currency_config_value(app),
             last_visible_rows: Cell::new(0),
             last_row_hitboxes: RefCell::new(Vec::new()),
@@ -931,7 +1095,7 @@ impl ConfigView {
     fn key_column_width(&self) -> usize {
         self.rows
             .iter()
-            .map(|row| row.key.chars().count())
+            .map(|row| UnicodeWidthStr::width(row.key.as_str()))
             .max()
             .unwrap_or(CONFIG_MIN_KEY_COLUMN_WIDTH)
             .max(CONFIG_MIN_KEY_COLUMN_WIDTH)
@@ -1244,7 +1408,7 @@ fn config_hint_for_key(key: &str) -> &'static str {
         | "composer_border"
         | "paste_burst_detection" => "on/off, true/false, yes/no, 1/0",
         "composer_density" | "transcript_spacing" => "compact | comfortable | spacious",
-        "theme" => "system | dark | light | grayscale",
+        "theme" => "system | terminal | deepseek-shell | dark | light | grayscale",
         "locale" => "auto | en | ja | zh-Hans | pt-BR",
         "background_color" => "#RRGGBB | default",
         "base_url" => "global DeepSeek/root fallback; e.g. https://api.deepseek.com/beta",
@@ -1264,7 +1428,10 @@ fn config_hint_for_key(key: &str) -> &'static str {
     }
 }
 
-fn render_config_editor_value_line(edit: &ConfigEdit) -> ratatui::text::Line<'static> {
+fn render_config_editor_value_line(
+    edit: &ConfigEdit,
+    ui_theme: UiTheme,
+) -> ratatui::text::Line<'static> {
     use ratatui::{
         style::Style,
         text::{Line, Span},
@@ -1273,16 +1440,16 @@ fn render_config_editor_value_line(edit: &ConfigEdit) -> ratatui::text::Line<'st
     let mut spans = Vec::new();
     spans.push(Span::styled(
         "New: ",
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(ui_theme.text_muted),
     ));
 
     let cursor_style = Style::default()
-        .fg(palette::DEEPSEEK_INK)
-        .bg(palette::DEEPSEEK_SKY)
+        .fg(ui_theme.surface_bg)
+        .bg(ui_theme.accent_secondary)
         .bold();
     let selected_style = Style::default()
-        .fg(palette::SELECTION_TEXT)
-        .bg(palette::SELECTION_BG);
+        .fg(ui_theme.selection_text)
+        .bg(ui_theme.selection_bg);
 
     if edit.select_all && !edit.buffer.is_empty() {
         let text = edit.buffer.iter().collect::<String>();
@@ -1453,40 +1620,46 @@ impl ModalView for ConfigView {
 
         let base_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
+            .border_style(Style::default().fg(self.ui_theme.border))
+            .style(Style::default().bg(self.ui_theme.surface_bg))
             .padding(Padding::uniform(1));
 
-        let inner = base_block.inner(popup_area);
+        let inner = if palette::ascii_ui_enabled() {
+            ascii_modal_inner(popup_area)
+        } else {
+            base_block.inner(popup_area)
+        };
         let (lines, footer) = if let Some(edit) = self.editing.as_ref() {
             let mut lines: Vec<Line> = Vec::new();
             lines.push(Line::from(vec![Span::styled(
                 format!("Edit {}", edit.key),
-                Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                Style::default().fg(self.ui_theme.accent_secondary).bold(),
             )]));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Scope: ", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Scope: ", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw(edit.scope.label()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("Current: ", Style::default().fg(palette::TEXT_MUTED)),
+                Span::styled("Current: ", Style::default().fg(self.ui_theme.text_muted)),
                 Span::raw(truncate_view_text(&edit.original_value, 60)),
             ]));
             lines.push(Line::from(""));
-            lines.push(render_config_editor_value_line(edit));
+            lines.push(render_config_editor_value_line(edit, self.ui_theme));
             lines.push(Line::from(""));
             let hint = config_hint_for_key(&edit.key);
             if !hint.is_empty() {
                 lines.push(Line::from(vec![
-                    Span::styled("Hint: ", Style::default().fg(palette::TEXT_MUTED)),
+                    Span::styled("Hint: ", Style::default().fg(self.ui_theme.text_muted)),
                     Span::raw(hint),
                 ]));
             }
             (
                 lines,
-                " Enter=apply, Esc=cancel, Ctrl+U=clear, Ctrl+A=all, \u{2190}/\u{2192}=move "
-                    .to_string(),
+                format!(
+                    " Enter=apply, Esc=cancel, Ctrl+U=clear, Ctrl+A=all, {} ",
+                    config_editor_move_hint()
+                ),
             )
         } else {
             let content_height = usize::from(inner.height);
@@ -1513,25 +1686,22 @@ impl ModalView for ConfigView {
             let mut lines: Vec<Line> = vec![
                 Line::from(vec![Span::styled(
                     self.tr(MessageId::ConfigTitle),
-                    Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
+                    Style::default().fg(self.ui_theme.accent_primary).bold(),
                 )]),
                 Line::from(vec![
-                    Span::styled("  Search: ", Style::default().fg(palette::TEXT_MUTED)),
+                    Span::styled("  Search: ", Style::default().fg(self.ui_theme.text_muted)),
                     Span::raw(search_value),
                     Span::styled(
                         format!("  ({match_count}/{})", self.rows.len()),
-                        Style::default().fg(palette::TEXT_MUTED),
+                        Style::default().fg(self.ui_theme.text_muted),
                     ),
                 ]),
                 Line::from(""),
                 Line::from(format!(
-                    "  {:<key_width$} {:<value_width$} {:<scope_width$}",
-                    "Key",
-                    "Value",
-                    "Scope",
-                    key_width = key_column_width,
-                    value_width = value_column_width,
-                    scope_width = scope_column_width
+                    "  {} {} {}",
+                    pad_view_text("Key", key_column_width),
+                    pad_view_text("Value", value_column_width),
+                    pad_view_text("Scope", scope_column_width)
                 )),
                 Line::from(format!(
                     "  {}",
@@ -1550,7 +1720,7 @@ impl ModalView for ConfigView {
                     ConfigListItem::Section(section) => {
                         lines.push(Line::from(Span::styled(
                             format!("  {}", section.label()),
-                            Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                            Style::default().fg(self.ui_theme.accent_secondary).bold(),
                         )));
                     }
                     ConfigListItem::Row(idx) => {
@@ -1562,25 +1732,17 @@ impl ModalView for ConfigView {
                         let selected = *idx == self.selected;
                         let style = if selected {
                             Style::default()
-                                .fg(ratatui::style::Color::White)
-                                .bg(palette::DEEPSEEK_BLUE)
+                                .fg(self.ui_theme.selection_text)
+                                .bg(self.ui_theme.selection_bg)
                                 .add_modifier(ratatui::style::Modifier::BOLD)
                         } else {
-                            Style::default().fg(palette::TEXT_PRIMARY)
+                            Style::default().fg(self.ui_theme.text_body)
                         };
-                        let key = truncate_view_text(&row.key, key_column_width);
+                        let key = pad_view_text(&row.key, key_column_width);
                         let value =
-                            truncate_view_text(&self.row_display_value(row), value_column_width);
-                        let scope = truncate_view_text(row.scope.label(), scope_column_width);
-                        let mut line = Line::from(format!(
-                            "  {:<key_width$} {:<value_width$} {:<scope_width$}",
-                            key,
-                            value,
-                            scope,
-                            key_width = key_column_width,
-                            value_width = value_column_width,
-                            scope_width = scope_column_width
-                        ));
+                            pad_view_text(&self.row_display_value(row), value_column_width);
+                        let scope = pad_view_text(row.scope.label(), scope_column_width);
+                        let mut line = Line::from(format!("  {key} {value} {scope}"));
                         line.style = style;
                         lines.push(line);
                     }
@@ -1600,7 +1762,7 @@ impl ModalView for ConfigView {
                 };
                 lines.push(Line::from(Span::styled(
                     message,
-                    Style::default().fg(palette::TEXT_MUTED),
+                    Style::default().fg(self.ui_theme.text_muted),
                 )));
             }
 
@@ -1624,7 +1786,7 @@ impl ModalView for ConfigView {
             };
             lines.push(Line::from(Span::styled(
                 bottom_text,
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )));
 
             let footer = if !self.filter.is_empty() {
@@ -1637,24 +1799,35 @@ impl ModalView for ConfigView {
             (lines, footer.to_string())
         };
 
-        let block = Block::default()
-            .title(Line::from(vec![Span::styled(
-                self.tr(MessageId::ConfigModalTitle),
-                Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
-            )]))
-            .title_bottom(Line::from(Span::styled(
-                footer,
-                Style::default().fg(palette::TEXT_MUTED),
-            )))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette::BORDER_COLOR))
-            .style(Style::default().bg(palette::DEEPSEEK_INK))
-            .padding(Padding::uniform(1));
+        let inner = if palette::ascii_ui_enabled() {
+            render_ascii_views_modal_chrome(
+                popup_area,
+                buf,
+                &self.tr(MessageId::ConfigModalTitle).to_string(),
+                Some(&footer),
+                self.ui_theme,
+            )
+        } else {
+            let block = Block::default()
+                .title(Line::from(vec![Span::styled(
+                    self.tr(MessageId::ConfigModalTitle),
+                    Style::default().fg(self.ui_theme.accent_primary).bold(),
+                )]))
+                .title_bottom(Line::from(Span::styled(
+                    footer,
+                    Style::default().fg(self.ui_theme.text_muted),
+                )))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(self.ui_theme.border))
+                .style(Style::default().bg(self.ui_theme.surface_bg))
+                .padding(Padding::uniform(1));
 
-        let inner = block.inner(popup_area);
-        block.render(popup_area, buf);
+            let inner = block.inner(popup_area);
+            block.render(popup_area, buf);
+            inner
+        };
         Paragraph::new(lines)
-            .style(Style::default().fg(palette::TEXT_PRIMARY))
+            .style(Style::default().fg(self.ui_theme.text_body))
             .scroll((0, 0))
             .render(inner, buf);
     }
@@ -1667,6 +1840,7 @@ pub use help::HelpView;
 pub struct SubAgentsView {
     agents: Vec<SubAgentResult>,
     scroll: usize,
+    ui_theme: UiTheme,
 }
 
 /// Build the agent rows shown by `/subagents`.
@@ -1777,7 +1951,16 @@ fn live_subagent_result(
 
 impl SubAgentsView {
     pub fn new(agents: Vec<SubAgentResult>) -> Self {
-        Self { agents, scroll: 0 }
+        Self {
+            agents,
+            scroll: 0,
+            ui_theme: palette::UI_THEME,
+        }
+    }
+
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
     }
 }
 
@@ -1841,7 +2024,7 @@ impl ModalView for SubAgentsView {
         if self.agents.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No agents running.",
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(self.ui_theme.text_muted),
             )));
         } else {
             let mut running = Vec::new();
@@ -1861,16 +2044,16 @@ impl ModalView for SubAgentsView {
             }
 
             let status_summary = [
-                ("Running", running.len(), palette::STATUS_WARNING),
-                ("Completed", completed.len(), palette::STATUS_SUCCESS),
-                ("Interrupted", interrupted.len(), palette::STATUS_WARNING),
-                ("Failed", failed.len(), palette::DEEPSEEK_RED),
-                ("Cancelled", cancelled.len(), palette::TEXT_MUTED),
+                ("Running", running.len(), self.ui_theme.status_warning),
+                ("Completed", completed.len(), self.ui_theme.success),
+                ("Interrupted", interrupted.len(), self.ui_theme.status_warning),
+                ("Failed", failed.len(), self.ui_theme.error_fg),
+                ("Cancelled", cancelled.len(), self.ui_theme.text_muted),
             ];
 
             lines.push(Line::from(Span::styled(
                 "Sub-agents",
-                Style::default().fg(palette::DEEPSEEK_SKY).bold(),
+                Style::default().fg(self.ui_theme.accent_secondary).bold(),
             )));
 
             let mut summary_parts = Vec::new();
@@ -1881,17 +2064,20 @@ impl ModalView for SubAgentsView {
                 )));
             }
 
-            let mut summary = vec![Span::styled("  ", Style::default().fg(palette::TEXT_DIM))];
+            let mut summary = vec![Span::styled(
+                "  ",
+                Style::default().fg(self.ui_theme.text_dim),
+            )];
             for (idx, part) in summary_parts.into_iter().enumerate() {
                 if idx > 0 {
-                    summary.push(Span::raw("  ·  "));
+                    summary.push(Span::raw(modal_summary_separator()));
                 }
                 summary.extend(part);
             }
             lines.push(Line::from(summary));
             lines.push(Line::from(Span::styled(
                 "",
-                Style::default().fg(palette::TEXT_DIM),
+                Style::default().fg(self.ui_theme.text_dim),
             )));
 
             running.sort_by(|a, b| {
@@ -1918,37 +2104,42 @@ impl ModalView for SubAgentsView {
             append_subagent_group(
                 &mut lines,
                 "Running",
-                palette::STATUS_WARNING.into(),
+                Style::default().fg(self.ui_theme.status_warning),
                 &running,
                 content_width,
+                self.ui_theme,
             );
             append_subagent_group(
                 &mut lines,
                 "Completed",
-                palette::STATUS_SUCCESS.into(),
+                Style::default().fg(self.ui_theme.success),
                 &completed,
                 content_width,
+                self.ui_theme,
             );
             append_subagent_group(
                 &mut lines,
                 "Interrupted",
-                palette::STATUS_WARNING.into(),
+                Style::default().fg(self.ui_theme.status_warning),
                 &interrupted,
                 content_width,
+                self.ui_theme,
             );
             append_subagent_group(
                 &mut lines,
                 "Failed",
-                palette::DEEPSEEK_RED.into(),
+                Style::default().fg(self.ui_theme.error_fg),
                 &failed,
                 content_width,
+                self.ui_theme,
             );
             append_subagent_group(
                 &mut lines,
                 "Cancelled",
-                palette::TEXT_MUTED.into(),
+                Style::default().fg(self.ui_theme.text_muted),
                 &cancelled,
                 content_width,
+                self.ui_theme,
             );
         }
 
@@ -1958,31 +2149,54 @@ impl ModalView for SubAgentsView {
         let scroll = self.scroll.min(max_scroll);
 
         let scroll_indicator = if total_lines > visible_lines {
-            format!(" [{}/{} ↑↓] ", scroll + 1, max_scroll + 1)
+            format!(" [{}/{} {}] ", scroll + 1, max_scroll + 1, scroll_nav_hint())
         } else {
             String::new()
         };
 
-        let view = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .title(Line::from(vec![Span::styled(
-                        " Sub-agents ",
-                        Style::default().fg(palette::DEEPSEEK_BLUE).bold(),
-                    )]))
-                    .title_bottom(Line::from(vec![
-                        Span::styled(" Esc to close ", Style::default().fg(palette::TEXT_MUTED)),
-                        Span::styled(" R to refresh ", Style::default().fg(palette::TEXT_MUTED)),
-                        Span::styled(scroll_indicator, Style::default().fg(palette::DEEPSEEK_SKY)),
-                    ]))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(palette::BORDER_COLOR))
-                    .style(Style::default().bg(palette::DEEPSEEK_INK))
-                    .padding(Padding::uniform(1)),
-            )
-            .scroll((scroll as u16, 0));
+        if palette::ascii_ui_enabled() {
+            let footer = format!(" Esc to close  R to refresh {scroll_indicator}");
+            let inner = render_ascii_views_modal_chrome(
+                popup_area,
+                buf,
+                " Sub-agents ",
+                Some(&footer),
+                self.ui_theme,
+            );
+            Paragraph::new(lines)
+                .scroll((scroll as u16, 0))
+                .render(inner, buf);
+        } else {
+            let view = Paragraph::new(lines)
+                .block(
+                    Block::default()
+                        .title(Line::from(vec![Span::styled(
+                            " Sub-agents ",
+                            Style::default().fg(self.ui_theme.accent_primary).bold(),
+                        )]))
+                        .title_bottom(Line::from(vec![
+                            Span::styled(
+                                " Esc to close ",
+                                Style::default().fg(self.ui_theme.text_muted),
+                            ),
+                            Span::styled(
+                                " R to refresh ",
+                                Style::default().fg(self.ui_theme.text_muted),
+                            ),
+                            Span::styled(
+                                scroll_indicator,
+                                Style::default().fg(self.ui_theme.accent_secondary),
+                            ),
+                        ]))
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(self.ui_theme.border))
+                        .style(Style::default().bg(self.ui_theme.surface_bg))
+                        .padding(Padding::uniform(1)),
+                )
+                .scroll((scroll as u16, 0));
 
-        view.render(popup_area, buf);
+            view.render(popup_area, buf);
+        }
     }
 }
 
@@ -1992,6 +2206,7 @@ fn append_subagent_group(
     section_style: ratatui::style::Style,
     agents: &[&SubAgentResult],
     content_width: usize,
+    ui_theme: UiTheme,
 ) {
     use ratatui::{
         style::Style,
@@ -2014,28 +2229,29 @@ fn append_subagent_group(
             .map(|nick| format!("{nick:<12}"))
             .unwrap_or_else(|| format!("{id:<12}"));
         let kind = format_agent_type(&agent.agent_type);
-        let (status, status_style, status_detail) = format_agent_status(&agent.status);
+        let (status, status_style, status_detail) =
+            format_agent_status(&agent.status, ui_theme);
 
         lines.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(display_name, Style::default().fg(palette::TEXT_PRIMARY)),
+            Span::styled(display_name, Style::default().fg(ui_theme.text_body)),
             Span::raw(" "),
-            Span::styled(format!("{id:<11}"), Style::default().fg(palette::TEXT_DIM)),
+            Span::styled(format!("{id:<11}"), Style::default().fg(ui_theme.text_dim)),
             Span::styled(
                 format!("{kind:<9}"),
-                Style::default().fg(palette::TEXT_MUTED),
+                Style::default().fg(ui_theme.text_muted),
             ),
             Span::raw("  "),
             Span::styled(format!("{status:<10}"), status_style),
             Span::raw("  "),
             Span::styled(
-                format!("{:>4}✦", agent.steps_taken),
-                Style::default().fg(palette::TEXT_DIM),
+                format!("{:>4}{}", agent.steps_taken, subagent_steps_suffix()),
+                Style::default().fg(ui_theme.text_dim),
             ),
             Span::raw("  "),
             Span::styled(
                 format!("{:>6}ms", agent.duration_ms),
-                Style::default().fg(palette::TEXT_DIM),
+                Style::default().fg(ui_theme.text_dim),
             ),
         ]));
 
@@ -2043,8 +2259,8 @@ fn append_subagent_group(
             let max_len = content_width.saturating_sub(10);
             let detail = truncate_view_text(detail, max_len);
             lines.push(Line::from(vec![
-                Span::styled("    reason: ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::styled(detail, Style::default().fg(palette::DEEPSEEK_RED)),
+                Span::styled("    reason: ", Style::default().fg(ui_theme.text_muted)),
+                Span::styled(detail, Style::default().fg(ui_theme.error_fg)),
             ]));
         }
 
@@ -2052,24 +2268,24 @@ fn append_subagent_group(
             let max_len = content_width.saturating_sub(14);
             let role = truncate_view_text(role, max_len);
             lines.push(Line::from(vec![
-                Span::styled("    role: ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::styled(role, Style::default().fg(palette::DEEPSEEK_SKY)),
+                Span::styled("    role: ", Style::default().fg(ui_theme.text_muted)),
+                Span::styled(role, Style::default().fg(ui_theme.accent_secondary)),
             ]));
         }
 
         let max_len = content_width.saturating_sub(18);
         let objective = truncate_view_text(&agent.assignment.objective, max_len);
         lines.push(Line::from(vec![
-            Span::styled("    objective: ", Style::default().fg(palette::TEXT_MUTED)),
-            Span::styled(objective, Style::default().fg(palette::TEXT_DIM)),
+            Span::styled("    objective: ", Style::default().fg(ui_theme.text_muted)),
+            Span::styled(objective, Style::default().fg(ui_theme.text_dim)),
         ]));
 
         if let Some(result) = agent.result.as_ref() {
             let max_len = content_width.saturating_sub(16);
             let preview = truncate_view_text(result, max_len);
             lines.push(Line::from(vec![
-                Span::styled("    result: ", Style::default().fg(palette::TEXT_MUTED)),
-                Span::styled(preview, Style::default().fg(palette::TEXT_DIM)),
+                Span::styled("    result: ", Style::default().fg(ui_theme.text_muted)),
+                Span::styled(preview, Style::default().fg(ui_theme.text_dim)),
             ]));
         }
     }
@@ -2098,52 +2314,86 @@ fn format_agent_type(agent_type: &SubAgentType) -> &'static str {
 
 fn format_agent_status(
     status: &SubAgentStatus,
+    ui_theme: UiTheme,
 ) -> (&'static str, ratatui::style::Style, Option<&str>) {
     use ratatui::style::Style;
 
     match status {
-        SubAgentStatus::Running => ("running", Style::default().fg(palette::DEEPSEEK_SKY), None),
+        SubAgentStatus::Running => (
+            "running",
+            Style::default().fg(ui_theme.status_working),
+            None,
+        ),
         SubAgentStatus::Completed => (
             "completed",
-            Style::default().fg(palette::DEEPSEEK_BLUE),
+            Style::default().fg(ui_theme.success),
             None,
         ),
         SubAgentStatus::Interrupted(reason) => (
             "interrupted",
-            Style::default().fg(palette::STATUS_WARNING),
+            Style::default().fg(ui_theme.status_warning),
             Some(reason.as_str()),
         ),
-        SubAgentStatus::Cancelled => ("cancelled", Style::default().fg(palette::TEXT_MUTED), None),
+        SubAgentStatus::Cancelled => (
+            "cancelled",
+            Style::default().fg(ui_theme.text_muted),
+            None,
+        ),
         SubAgentStatus::Failed(reason) => (
             "failed",
-            Style::default().fg(palette::DEEPSEEK_RED),
+            Style::default().fg(ui_theme.error_fg),
             Some(reason.as_str()),
         ),
     }
 }
 
-fn truncate_view_text(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
+fn truncate_view_text(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
         return String::new();
     }
-    match text.char_indices().nth(max_chars) {
-        Some((idx, _)) => text[..idx].to_string(),
-        None => text.to_string(),
+
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
     }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
+}
+
+fn pad_view_text(text: &str, width: usize) -> String {
+    let mut out = truncate_view_text(text, width);
+    let out_width = UnicodeWidthStr::width(out.as_str());
+    if out_width < width {
+        out.push_str(&" ".repeat(width - out_width));
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         ConfigListItem, ConfigSection, ConfigView, ModalKind, ModalView, ShellControlView,
-        ViewAction, ViewEvent, ViewStack, subagent_view_agents, truncate_view_text,
+        ViewAction, ViewEvent, ViewStack, config_editor_move_hint, modal_summary_separator,
+        pad_view_text, render_ascii_views_modal_chrome, scroll_nav_hint, subagent_steps_suffix,
+        subagent_view_agents, truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
+    use crate::palette;
     use crate::settings::Settings;
     use crate::tools::subagent::{
         SubAgentAssignment, SubAgentResult, SubAgentStatus, SubAgentType,
     };
+    use unicode_width::UnicodeWidthStr;
     use crate::tui::app::{App, TuiOptions};
     use crate::tui::history::{HistoryCell, SubAgentCell};
     use crate::tui::widgets::agent_card::{AgentLifecycle, FanoutCard};
@@ -2156,6 +2406,61 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::MutexGuard;
     use tempfile::TempDir;
+
+    #[test]
+    fn modal_symbol_helpers_follow_ascii_mode() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(scroll_nav_hint(), "Up/Down");
+            assert_eq!(modal_summary_separator(), "  |  ");
+            assert_eq!(config_editor_move_hint(), "Left/Right=move");
+            assert_eq!(subagent_steps_suffix(), "*");
+        } else {
+            assert_eq!(scroll_nav_hint(), "\u{2191}\u{2193}");
+            assert_eq!(modal_summary_separator(), "  \u{00B7}  ");
+            assert_eq!(config_editor_move_hint(), "\u{2190}/\u{2192}=move");
+            assert_eq!(subagent_steps_suffix(), "\u{2726}");
+        }
+    }
+
+    #[test]
+    fn ascii_views_modal_chrome_uses_plain_border_chars_and_padding() {
+        let area = Rect::new(1, 1, 24, 8);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 28, 12));
+        let inner = render_ascii_views_modal_chrome(
+            area,
+            &mut buf,
+            " Config ",
+            Some(" Enter apply Esc close "),
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+
+        assert_eq!(buf[(area.x, area.y)].symbol(), "+");
+        assert_eq!(buf[(area.x + 1, area.y)].symbol(), "-");
+        assert_eq!(buf[(area.x, area.y + 1)].symbol(), "|");
+        assert_eq!(
+            buf[(
+                area.x + area.width.saturating_sub(1),
+                area.y + area.height.saturating_sub(1)
+            )]
+                .symbol(),
+            "+"
+        );
+        assert_eq!(inner, Rect::new(area.x + 2, area.y + 2, 20, 4));
+    }
+
+    #[test]
+    fn ascii_prefix_respects_cjk_display_width() {
+        let prefix = ascii_prefix(" 配置面板 ", 8);
+
+        assert!(
+            UnicodeWidthStr::width(prefix.as_str()) <= 8,
+            "prefix overflowed display width: {prefix:?}"
+        );
+        assert!(
+            prefix.is_char_boundary(prefix.len()),
+            "prefix should end on a valid char boundary: {prefix:?}"
+        );
+    }
 
     struct ConfigSettingsEnvGuard {
         _tmp: TempDir,
@@ -2321,6 +2626,31 @@ mod tests {
         assert_eq!(agents[0].assignment.objective, "read the docs");
     }
 
+    #[test]
+    fn subagents_view_uses_injected_theme_colors() {
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.accent_primary = ratatui::style::Color::Indexed(69);
+        theme.surface_bg = ratatui::style::Color::Indexed(233);
+        let view = SubAgentsView::new(vec![manager_agent(
+            "agent_theme",
+            SubAgentStatus::Running,
+        )])
+        .with_ui_theme(theme);
+        let area = Rect::new(0, 0, 90, 24);
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        assert!(
+            buf.content().iter().any(|cell| cell.fg == theme.accent_primary),
+            "sub-agents title should use injected accent color"
+        );
+        assert!(
+            buf.content().iter().any(|cell| cell.bg == theme.surface_bg),
+            "sub-agents surface should use injected background color"
+        );
+    }
+
     fn visible_section_labels(view: &ConfigView) -> Vec<&'static str> {
         view.visible_items()
             .into_iter()
@@ -2347,8 +2677,29 @@ mod tests {
         assert_eq!(truncate_view_text(text, 0), "");
         assert_eq!(truncate_view_text(text, 1), "a");
         assert_eq!(truncate_view_text(text, 3), "abc");
-        assert_eq!(truncate_view_text(text, 4), "abc😀");
-        assert_eq!(truncate_view_text(text, 5), "abc😀é");
+        assert_eq!(truncate_view_text(text, 4), "abc");
+        assert_eq!(truncate_view_text(text, 5), "abc😀");
+        assert_eq!(truncate_view_text(text, 6), "abc😀é");
+    }
+
+    #[test]
+    fn truncate_view_text_respects_cjk_display_width() {
+        let text = "配置项路径";
+        let truncated = truncate_view_text(text, 8);
+
+        assert!(
+            UnicodeWidthStr::width(truncated.as_str()) <= 8,
+            "truncated text overflowed display width: {truncated:?}"
+        );
+        assert_eq!(truncated, "配置项路");
+    }
+
+    #[test]
+    fn pad_view_text_pads_to_display_width() {
+        let padded = pad_view_text("路径", 6);
+
+        assert_eq!(UnicodeWidthStr::width(padded.as_str()), 6);
+        assert!(padded.starts_with("路径"));
     }
 
     #[test]
@@ -2740,6 +3091,27 @@ base_url = "https://api.xiaomimimo.com/v1"
     }
 
     #[test]
+    fn config_view_uses_app_theme_for_selected_row() {
+        let mut app = create_test_app();
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        theme.selection_text = ratatui::style::Color::Indexed(255);
+        app.ui_theme = theme;
+        let view = ConfigView::new_for_app(&app);
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        assert!(
+            buf.content()
+                .iter()
+                .any(|cell| cell.bg == theme.selection_bg && cell.fg == theme.selection_text),
+            "selected config row should use injected theme colors"
+        );
+    }
+
+    #[test]
     fn config_view_typing_replaces_on_first_char() {
         let app = create_test_app();
         let mut view = ConfigView::new_for_app(&app);
@@ -2788,6 +3160,26 @@ base_url = "https://api.xiaomimimo.com/v1"
             action,
             ViewAction::EmitAndClose(ViewEvent::ShellControlCancel)
         ));
+    }
+
+    #[test]
+    fn shell_control_view_uses_injected_theme_for_selection() {
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.selection_bg = ratatui::style::Color::Indexed(24);
+        theme.selection_text = ratatui::style::Color::Indexed(255);
+        let view = ShellControlView::new().with_ui_theme(theme);
+        let area = Rect::new(0, 0, 80, 18);
+        let mut buf = Buffer::empty(area);
+
+        view.render(area, &mut buf);
+
+        let selected_key = buf
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "B")
+            .expect("selected background shortcut should render");
+        assert_eq!(selected_key.bg, theme.selection_bg);
+        assert_eq!(selected_key.fg, theme.selection_text);
     }
 
     /// A modal that doesn't override `handle_paste` must report

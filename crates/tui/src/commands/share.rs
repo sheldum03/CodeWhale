@@ -11,7 +11,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use super::CommandResult;
+use super::{CommandResult, command_text_separator};
 use crate::dependencies::ExternalTool;
 use crate::tui::app::{App, AppAction};
 
@@ -21,17 +21,17 @@ pub fn share(app: &mut App, arg: Option<&str>) -> CommandResult {
 
     match raw {
         "" => do_share(app),
-        "help" | "--help" | "-h" => CommandResult::message(
-            "/share — Export the current session as a shareable web URL.\n\
+        "help" | "--help" | "-h" => CommandResult::message(format!(
+            "/share{}Export the current session as a shareable web URL.\n\
              \n\
              Usage:\n\
              /share         Export and upload the current session\n\
              \n\
              The session transcript is rendered as static HTML and uploaded\n\
              to a GitHub Gist using the `gh` CLI. The Gist URL is displayed\n\
-             so you can paste it into Slack, GitHub, Twitter, etc."
-                .to_string(),
-        ),
+             so you can paste it into Slack, GitHub, Twitter, etc.",
+            command_text_separator()
+        )),
         _ => CommandResult::error(format!(
             "Unknown /share argument `{raw}`. Use `/share` with no arguments or `/share help`."
         )),

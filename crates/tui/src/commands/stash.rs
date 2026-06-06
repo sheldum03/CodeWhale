@@ -8,7 +8,7 @@
 use crate::composer_stash;
 use crate::tui::app::App;
 
-use super::CommandResult;
+use super::{CommandResult, command_ellipsis, command_text_separator};
 
 /// Top-level dispatch for `/stash`. Subcommands:
 ///
@@ -54,7 +54,7 @@ fn list() -> CommandResult {
 
 fn clear() -> CommandResult {
     match composer_stash::clear_stash() {
-        Ok(0) => CommandResult::message("Stash already empty — nothing to clear."),
+        Ok(0) => CommandResult::message(stash_already_empty_message()),
         Ok(n) => CommandResult::message(format!("Cleared {n} parked draft(s) from the stash.")),
         Err(err) => CommandResult::error(format!("Failed to clear stash: {err}")),
     }
@@ -82,8 +82,19 @@ fn pop(app: &mut App) -> CommandResult {
             };
             CommandResult::message(format!("Restored stashed draft: {preview}{suffix}"))
         }
-        None => CommandResult::message("Stash empty — nothing to pop."),
+        None => CommandResult::message(stash_empty_pop_message()),
     }
+}
+
+fn stash_already_empty_message() -> String {
+    format!(
+        "Stash already empty{}nothing to clear.",
+        command_text_separator()
+    )
+}
+
+fn stash_empty_pop_message() -> String {
+    format!("Stash empty{}nothing to pop.", command_text_separator())
 }
 
 /// Take a one-line preview of `text`, capped at `max_chars`.
@@ -94,21 +105,33 @@ fn preview_first_line(text: &str, max_chars: usize) -> String {
     if head.chars().count() <= max_chars {
         return head.to_string();
     }
-    let mut out: String = head.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('…');
+    let marker = command_ellipsis();
+    let marker_len = marker.chars().count();
+    if max_chars <= marker_len {
+        return marker.chars().take(max_chars).collect();
+    }
+    let mut out: String = head.chars().take(max_chars - marker_len).collect();
+    out.push_str(marker);
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVarGuard;
 
     #[test]
     fn preview_first_line_truncates_to_cap() {
         let body = "x".repeat(200);
         let p = preview_first_line(&body, 10);
         assert_eq!(p.chars().count(), 10);
-        assert!(p.ends_with('…'));
+        assert!(p.ends_with(command_ellipsis()));
+    }
+
+    #[test]
+    fn preview_first_line_respects_tiny_cap() {
+        let p = preview_first_line("abcdef", 1);
+        assert_eq!(p.chars().count(), 1);
     }
 
     #[test]
@@ -126,5 +149,17 @@ mod tests {
     fn preview_first_line_handles_empty_input() {
         assert_eq!(preview_first_line("", 50), "");
         assert_eq!(preview_first_line("   ", 50), "");
+    }
+
+    #[test]
+    fn stash_empty_messages_use_ascii_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+
+        assert_eq!(
+            stash_already_empty_message(),
+            "Stash already empty - nothing to clear."
+        );
+        assert_eq!(stash_empty_pop_message(), "Stash empty - nothing to pop.");
     }
 }

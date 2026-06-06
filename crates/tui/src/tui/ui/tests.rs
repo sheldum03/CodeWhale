@@ -1410,7 +1410,28 @@ fn create_test_app() -> App {
     // Pin locale and currency for deterministic tests regardless of host locale.
     app.cost_currency = crate::pricing::CostCurrency::Usd;
     app.ui_locale = crate::localization::Locale::En;
+    // App::new may honor saved local settings. Keep UI tests independent from
+    // a developer's configured theme so color assertions remain deterministic.
+    app.theme_id = palette::ThemeId::Whale;
+    app.ui_theme = palette::UI_THEME;
     app
+}
+
+#[test]
+fn render_theme_for_app_preserves_runtime_ui_theme_tokens() {
+    let mut app = create_test_app();
+    let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+    ui_theme.success = ratatui::style::Color::Indexed(42);
+    ui_theme.elevated_bg = ratatui::style::Color::Indexed(53);
+
+    app.theme_id = palette::ThemeId::DeepSeekShell;
+    app.ui_theme = ui_theme;
+
+    let theme = render_theme_for_app(&app);
+
+    assert_eq!(theme.variant, crate::deepseek_theme::Variant::DeepSeekShell);
+    assert_eq!(theme.status_success_color, ui_theme.success);
+    assert_eq!(theme.user_message_bg_color(), ui_theme.elevated_bg);
 }
 
 #[test]
@@ -3658,6 +3679,8 @@ fn footer_auxiliary_spans_show_cache_and_cost_when_roomy() {
 #[test]
 fn footer_cache_low_hit_with_stable_prefix_is_not_error_colored() {
     let mut app = create_test_app();
+    app.ui_theme.text_muted = ratatui::style::Color::Indexed(244);
+    app.ui_theme.error_fg = ratatui::style::Color::Indexed(196);
     app.session.last_prompt_tokens = Some(10_000);
     app.session.last_prompt_cache_hit_tokens = Some(500);
     app.session.last_prompt_cache_miss_tokens = Some(9_500);
@@ -3667,12 +3690,14 @@ fn footer_cache_low_hit_with_stable_prefix_is_not_error_colored() {
     let spans = footer_cache_spans(&app);
 
     assert_eq!(spans_text(&spans), "Cache: 5.0% hit | hit 500 | miss 9500");
-    assert_eq!(spans[0].style.fg, Some(palette::TEXT_MUTED));
+    assert_eq!(spans[0].style.fg, Some(app.ui_theme.text_muted));
 }
 
 #[test]
 fn footer_cache_low_hit_with_prefix_churn_stays_error_colored() {
     let mut app = create_test_app();
+    app.ui_theme.text_muted = ratatui::style::Color::Indexed(244);
+    app.ui_theme.error_fg = ratatui::style::Color::Indexed(196);
     app.session.last_prompt_tokens = Some(10_000);
     app.session.last_prompt_cache_hit_tokens = Some(500);
     app.session.last_prompt_cache_miss_tokens = Some(9_500);
@@ -3681,7 +3706,33 @@ fn footer_cache_low_hit_with_prefix_churn_stays_error_colored() {
 
     let spans = footer_cache_spans(&app);
 
-    assert_eq!(spans[0].style.fg, Some(palette::STATUS_ERROR));
+    assert_eq!(spans[0].style.fg, Some(app.ui_theme.error_fg));
+}
+
+#[test]
+fn status_toast_color_can_use_active_ui_theme() {
+    let mut theme = palette::UI_THEME;
+    theme.status_working = ratatui::style::Color::Indexed(99);
+    theme.success = ratatui::style::Color::Indexed(42);
+    theme.status_warning = ratatui::style::Color::Indexed(214);
+    theme.error_fg = ratatui::style::Color::Indexed(196);
+
+    assert_eq!(
+        status_color_for_theme(StatusToastLevel::Info, &theme),
+        ratatui::style::Color::Indexed(99)
+    );
+    assert_eq!(
+        status_color_for_theme(StatusToastLevel::Success, &theme),
+        ratatui::style::Color::Indexed(42)
+    );
+    assert_eq!(
+        status_color_for_theme(StatusToastLevel::Warning, &theme),
+        ratatui::style::Color::Indexed(214)
+    );
+    assert_eq!(
+        status_color_for_theme(StatusToastLevel::Error, &theme),
+        ratatui::style::Color::Indexed(196)
+    );
 }
 
 #[test]
@@ -4467,10 +4518,34 @@ async fn dismissed_plan_prompt_leaves_non_numeric_input_for_normal_send_path() {
             .map(crate::tui::app::QueuedMessage::content),
         Some("yolo".to_string())
     );
-    assert_eq!(
-        app.status_message.as_deref(),
-        Some("Offline: 1 queued — ↑ to edit, /queue list")
+    let expected = format!(
+        "Offline: 1 queued{}{}, /queue list",
+        ui_clause_separator(),
+        ui_up_edit_hint()
     );
+    assert_eq!(app.status_message.as_deref(), Some(expected.as_str()));
+}
+
+#[test]
+fn ui_symbol_helpers_follow_ascii_mode() {
+    if palette::ascii_ui_enabled() {
+        assert_eq!(ui_change_arrow(), "->");
+        assert_eq!(ui_status_separator(), " | ");
+        assert_eq!(ui_left_right_hint(), "Left/Right");
+        assert_eq!(ui_warning_prefix(), "Warning");
+        assert_eq!(ui_vertical_bar_char(), '|');
+        assert_eq!(ui_spillover_title(), "-- Full output (spillover) --");
+    } else {
+        assert_eq!(ui_change_arrow(), "\u{2192}");
+        assert_eq!(ui_status_separator(), " \u{00B7} ");
+        assert_eq!(ui_left_right_hint(), "\u{2190}/\u{2192}");
+        assert_eq!(ui_warning_prefix(), "\u{26A0}");
+        assert_eq!(ui_vertical_bar_char(), '\u{2502}');
+        assert_eq!(
+            ui_spillover_title(),
+            "\u{2500}\u{2500} Full output (spillover) \u{2500}\u{2500}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -4807,8 +4882,9 @@ fn detail_target_prefers_visible_tool_card() {
 
     assert_eq!(detail_target_cell_index(&app), Some(1));
     let expected = format!(
-        "{} Activity: find · {} raw",
+        "{} Activity: find{}{} raw",
         crate::tui::key_shortcuts::activity_shortcut_label(),
+        ui_status_separator(),
         crate::tui::key_shortcuts::tool_details_shortcut_label()
     );
     assert_eq!(
@@ -4862,8 +4938,9 @@ fn activity_footer_hint_uses_details_for_subagent_cards() {
     app.viewport.last_transcript_visible = 4;
 
     let expected = format!(
-        "{} Activity: sub-agent · {} details",
+        "{} Activity: sub-agent{}{} details",
         crate::tui::key_shortcuts::activity_shortcut_label(),
+        ui_status_separator(),
         crate::tui::key_shortcuts::tool_details_shortcut_label()
     );
     assert_eq!(
@@ -7074,9 +7151,8 @@ fn tab_queues_running_turn_draft_for_next_turn() {
         Some("follow up next")
     );
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|msg| msg.contains("queued — ↑"))
+        app.status_message.as_deref().is_some_and(|msg| msg
+            .contains(&format!("queued{}{}", ui_clause_separator(), ui_up_edit_hint())))
     );
 }
 
@@ -7203,6 +7279,24 @@ fn render_footer_from_with_default_items_renders_mode_and_model() {
     // Tiny but real costs should render instead of disappearing as "$0.00".
     assert!(!props.cost.is_empty());
     assert_eq!(spans_text(&props.cost), "<$0.0001");
+}
+
+#[test]
+fn render_footer_from_agents_chip_uses_runtime_ui_theme() {
+    let mut app = create_test_app();
+    app.ui_theme.status_working = ratatui::style::Color::Indexed(99);
+    app.subagent_cache.push(make_subagent(
+        "agent_runtime_theme",
+        crate::tools::subagent::SubAgentStatus::Running,
+    ));
+
+    let props = render_footer_from(&app, &[crate::config::StatusItem::Agents], None);
+
+    assert_eq!(spans_text(&props.agents), "1 agent");
+    assert_eq!(
+        props.agents[0].style.fg,
+        Some(ratatui::style::Color::Indexed(99))
+    );
 }
 
 #[test]
@@ -7346,7 +7440,12 @@ fn footer_balance_spans_formats_cny() {
     };
     *app.balance_cell.lock().unwrap() = Some(info);
     let spans = footer_balance_spans(&app);
-    assert_eq!(spans_text(&spans), "balance ¥123.5");
+    let expected = if crate::palette::ascii_ui_enabled() {
+        "balance CNY 123.5"
+    } else {
+        "balance ¥123.5"
+    };
+    assert_eq!(spans_text(&spans), expected);
 }
 
 #[test]

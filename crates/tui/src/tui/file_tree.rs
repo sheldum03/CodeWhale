@@ -291,7 +291,8 @@ pub fn render_file_tree(
     f: &mut Frame,
     area: Rect,
     state: &mut FileTreeState,
-    mode: palette::PaletteMode,
+    theme_id: palette::ThemeId,
+    ui_theme: palette::UiTheme,
 ) {
     state.poll_loading();
     if area.width < FILE_TREE_MIN_WIDTH || area.height < 3 {
@@ -309,12 +310,12 @@ pub fn render_file_tree(
     if state.is_loading {
         lines.push(Line::from(Span::styled(
             "  Building file tree...",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )));
     } else if state.entries.is_empty() {
         lines.push(Line::from(Span::styled(
             "  (empty)",
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )));
     } else {
         let render_end = (scroll + max_visible).min(state.entries.len());
@@ -324,16 +325,8 @@ pub fn render_file_tree(
 
             // Build the line prefix: indent + expand/collapse marker + icon.
             let indent = "  ".repeat(entry.depth);
-            let expand_marker = if entry.is_dir {
-                if entry.expanded {
-                    "\u{25BC} "
-                } else {
-                    "\u{25B6} "
-                } // ▼ / ▶
-            } else {
-                "  "
-            };
-            // No separate icon: the ▼/▶ expand marker already signals dirs,
+            let expand_marker = file_tree_expand_marker(entry.is_dir, entry.expanded);
+            // No separate icon: the expand marker already signals dirs,
             // and SMP emoji (📁/📄, U+1F4C1/U+1F4C4) render at inconsistent
             // column widths across terminals, breaking layout. See issue #1314.
 
@@ -343,10 +336,10 @@ pub fn render_file_tree(
 
             let style = if is_selected {
                 Style::default()
-                    .fg(palette::SELECTION_TEXT)
-                    .bg(palette::SELECTION_BG)
+                    .fg(ui_theme.selection_text)
+                    .bg(ui_theme.selection_bg)
             } else {
-                Style::default().fg(palette::TEXT_PRIMARY)
+                Style::default().fg(ui_theme.text_body)
             };
 
             lines.push(Line::from(Span::styled(display, style)));
@@ -354,7 +347,7 @@ pub fn render_file_tree(
     }
 
     // Use the same theme as the sidebar for consistent styling.
-    let theme = Theme::for_palette_mode(mode);
+    let theme = Theme::from_ui_theme(theme_id, ui_theme);
     let section = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
         Block::default()
             .title(Line::from(Span::styled(
@@ -369,4 +362,41 @@ pub fn render_file_tree(
     );
 
     f.render_widget(section, area);
+}
+
+fn file_tree_expand_marker(is_dir: bool, expanded: bool) -> &'static str {
+    file_tree_expand_marker_with_ascii(is_dir, expanded, palette::ascii_ui_enabled())
+}
+
+fn file_tree_expand_marker_with_ascii(is_dir: bool, expanded: bool, ascii: bool) -> &'static str {
+    if !is_dir {
+        return "  ";
+    }
+    if ascii {
+        if expanded { "v " } else { "> " }
+    } else if expanded {
+        "\u{25BC} "
+    } else {
+        "\u{25B6} "
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_tree_expand_marker_has_ascii_fallback() {
+        assert_eq!(file_tree_expand_marker_with_ascii(false, false, true), "  ");
+        assert_eq!(file_tree_expand_marker_with_ascii(true, false, true), "> ");
+        assert_eq!(file_tree_expand_marker_with_ascii(true, true, true), "v ");
+        assert_eq!(
+            file_tree_expand_marker_with_ascii(true, false, false),
+            "\u{25B6} "
+        );
+        assert_eq!(
+            file_tree_expand_marker_with_ascii(true, true, false),
+            "\u{25BC} "
+        );
+    }
 }

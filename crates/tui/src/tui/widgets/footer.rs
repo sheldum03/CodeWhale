@@ -15,6 +15,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use crate::deepseek_theme::active_theme;
 use crate::localization::{Locale, MessageId, tr};
 use crate::palette;
 use crate::tui::app::{App, AppMode};
@@ -46,6 +47,10 @@ pub struct FooterProps {
     pub state_label: String,
     /// Color used for the status label.
     pub state_color: Color,
+    /// Theme warning color used by retry/shell status surfaces.
+    pub warning_color: Color,
+    /// Theme error color used by retry failure surfaces.
+    pub error_color: Color,
     /// Coherence chip spans (empty when no active intervention).
     pub coherence: Vec<Span<'static>>,
     /// Sub-agent count chip spans (empty when zero in-flight).
@@ -108,8 +113,24 @@ const WAVE_GLYPHS: [char; 8] = [
 /// repaint a new surface while keeping the math deterministic for tests.
 #[must_use]
 pub fn footer_working_strip_glyph_at(col: usize, width: usize, frame: u64) -> char {
+    footer_working_strip_glyph_at_with_ascii(col, width, frame, palette::ascii_ui_enabled())
+}
+
+#[must_use]
+pub fn footer_working_strip_glyph_at_with_ascii(
+    col: usize,
+    width: usize,
+    frame: u64,
+    ascii: bool,
+) -> char {
     if width == 0 {
         return ' ';
+    }
+
+    if ascii {
+        const ASCII_GLYPHS: [char; 4] = ['-', '=', '~', '='];
+        let idx = (col + (frame as usize / 80)) % ASCII_GLYPHS.len();
+        return ASCII_GLYPHS[idx];
     }
 
     let t = frame as f64 / 1000.0;
@@ -130,9 +151,16 @@ pub fn footer_working_strip_glyph_at(col: usize, width: usize, frame: u64) -> ch
 /// into a `Span` between the footer's left and right segments.
 #[must_use]
 pub fn footer_working_strip_string(width: usize, frame: u64) -> String {
+    footer_working_strip_string_with_ascii(width, frame, palette::ascii_ui_enabled())
+}
+
+#[must_use]
+pub fn footer_working_strip_string_with_ascii(width: usize, frame: u64, ascii: bool) -> String {
     let mut out = String::with_capacity(width * 4);
     for col in 0..width {
-        out.push(footer_working_strip_glyph_at(col, width, frame));
+        out.push(footer_working_strip_glyph_at_with_ascii(
+            col, width, frame, ascii,
+        ));
     }
     out
 }
@@ -155,16 +183,43 @@ pub fn footer_working_label(frame: u64, locale: Locale) -> String {
     out
 }
 
+#[must_use]
+pub(crate) fn footer_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " | "
+    } else {
+        " \u{00B7} "
+    }
+}
+
 /// Build a "⏳ shell running" chip span when a foreground shell command is
 /// active. Empty when no shell is running, which hides the chip entirely.
 #[must_use]
 pub fn footer_shell_chip(active: bool) -> Vec<Span<'static>> {
+    footer_shell_chip_with_color(
+        active,
+        active_theme().status_warning_color,
+        palette::ascii_ui_enabled(),
+    )
+}
+
+#[must_use]
+pub fn footer_shell_chip_with_color(
+    active: bool,
+    color: Color,
+    ascii: bool,
+) -> Vec<Span<'static>> {
     if !active {
         return Vec::new();
     }
+    let label = if ascii {
+        "> shell running"
+    } else {
+        "\u{23F3} shell running"
+    };
     vec![Span::styled(
-        "\u{23F3} shell running".to_string(),
-        Style::default().fg(palette::STATUS_WARNING),
+        label.to_string(),
+        Style::default().fg(color),
     )]
 }
 
@@ -175,6 +230,15 @@ pub fn footer_shell_chip(active: bool) -> Vec<Span<'static>> {
 /// English plural-`s` artefact.
 #[must_use]
 pub fn footer_agents_chip(running: usize, locale: Locale) -> Vec<Span<'static>> {
+    footer_agents_chip_with_color(running, locale, active_theme().assistant_accent_color)
+}
+
+#[must_use]
+pub fn footer_agents_chip_with_color(
+    running: usize,
+    locale: Locale,
+    color: Color,
+) -> Vec<Span<'static>> {
     if running == 0 {
         return Vec::new();
     }
@@ -183,10 +247,7 @@ pub fn footer_agents_chip(running: usize, locale: Locale) -> Vec<Span<'static>> 
     } else {
         tr(locale, MessageId::FooterAgentsPlural).replace("{count}", &running.to_string())
     };
-    vec![Span::styled(
-        text,
-        Style::default().fg(palette::DEEPSEEK_SKY),
-    )]
+    vec![Span::styled(text, Style::default().fg(color))]
 }
 
 /// Build the cumulative-elapsed chip ("worked 3h 12m") for the
@@ -197,6 +258,14 @@ pub fn footer_agents_chip(running: usize, locale: Locale) -> Vec<Span<'static>> 
 /// consistent w/d/h/m formatting.
 #[must_use]
 pub fn footer_worked_chip(elapsed: std::time::Duration) -> Vec<Span<'static>> {
+    footer_worked_chip_with_color(elapsed, active_theme().text_muted_color)
+}
+
+#[must_use]
+pub fn footer_worked_chip_with_color(
+    elapsed: std::time::Duration,
+    color: Color,
+) -> Vec<Span<'static>> {
     if elapsed < std::time::Duration::from_secs(60) {
         return Vec::new();
     }
@@ -204,10 +273,7 @@ pub fn footer_worked_chip(elapsed: std::time::Duration) -> Vec<Span<'static>> {
         "worked {}",
         crate::tui::notifications::humanize_duration(elapsed)
     );
-    vec![Span::styled(
-        label,
-        Style::default().fg(palette::TEXT_MUTED),
-    )]
+    vec![Span::styled(label, Style::default().fg(color))]
 }
 
 /// Build the "MCP M/N" health chip (#502) from the user's stored
@@ -222,14 +288,50 @@ pub fn footer_worked_chip(elapsed: std::time::Duration) -> Vec<Span<'static>> {
 /// - configured but no live snapshot yet → muted (count only)
 #[must_use]
 pub fn footer_mcp_chip(connected: Option<usize>, configured: usize) -> Vec<Span<'static>> {
+    let theme = active_theme();
+    footer_mcp_chip_with_colors(
+        connected,
+        configured,
+        theme.text_muted_color,
+        theme.status_success_color,
+        theme.status_warning_color,
+        theme.status_error_color,
+    )
+}
+
+#[must_use]
+pub fn footer_mcp_chip_with_theme(
+    connected: Option<usize>,
+    configured: usize,
+    theme: &palette::UiTheme,
+) -> Vec<Span<'static>> {
+    footer_mcp_chip_with_colors(
+        connected,
+        configured,
+        theme.text_muted,
+        theme.success,
+        theme.status_warning,
+        theme.error_fg,
+    )
+}
+
+#[must_use]
+fn footer_mcp_chip_with_colors(
+    connected: Option<usize>,
+    configured: usize,
+    text_muted: Color,
+    success: Color,
+    warning: Color,
+    error: Color,
+) -> Vec<Span<'static>> {
     if configured == 0 {
         return Vec::new();
     }
     let (label, color) = match connected {
-        None => (format!("MCP {configured}"), palette::TEXT_MUTED),
-        Some(c) if c == configured => (format!("MCP {c}/{configured}"), palette::STATUS_SUCCESS),
-        Some(0) => (format!("MCP 0/{configured}"), palette::STATUS_ERROR),
-        Some(c) => (format!("MCP {c}/{configured}"), palette::STATUS_WARNING),
+        None => (format!("MCP {configured}"), text_muted),
+        Some(c) if c == configured => (format!("MCP {c}/{configured}"), success),
+        Some(0) => (format!("MCP 0/{configured}"), error),
+        Some(c) => (format!("MCP {c}/{configured}"), warning),
     };
     vec![Span::styled(label, Style::default().fg(color))]
 }
@@ -273,13 +375,16 @@ impl FooterProps {
             .mcp_snapshot
             .as_ref()
             .map(|s| s.servers.iter().filter(|server| server.connected).count());
-        let mcp = footer_mcp_chip(mcp_connected, mcp_configured);
+        let mcp = footer_mcp_chip_with_theme(mcp_connected, mcp_configured, &app.ui_theme);
         // #448: cumulative work-time chip. Sums actual turn durations
         // (set on `TurnComplete`) rather than wall-clock uptime — a TUI
         // that's been open and idle for 4 minutes shouldn't claim
         // "worked 4m". The chip stays empty until enough turns add up
         // to cross the 60s threshold inside `footer_worked_chip`.
-        let worked = footer_worked_chip(app.cumulative_turn_duration);
+        let worked = footer_worked_chip_with_color(
+            app.cumulative_turn_duration,
+            app.ui_theme.text_muted,
+        );
         Self {
             model: app.model_display_label(),
             mode_label,
@@ -290,6 +395,8 @@ impl FooterProps {
             footer_bg: app.ui_theme.footer_bg,
             state_label: state_label.to_string(),
             state_color,
+            warning_color: app.ui_theme.status_warning,
+            error_color: app.ui_theme.error_fg,
             coherence,
             agents,
             reasoning_replay,
@@ -388,7 +495,7 @@ impl FooterWidget {
         }
 
         let mode_label = self.props.mode_label;
-        let sep = " \u{00B7} ";
+        let sep = footer_separator();
         let model = self.props.model.as_str();
         let show_status = self.props.state_label != "ready";
         let status_label = self.props.state_label.as_str();
@@ -503,7 +610,7 @@ impl FooterWidget {
         cost: Option<String>,
         status: Option<&str>,
     ) -> Vec<Span<'static>> {
-        let sep = " \u{00B7} ";
+        let sep = footer_separator();
         let mut spans: Vec<Span<'static>> = Vec::new();
         if !mode_label.is_empty() {
             spans.push(Span::styled(
@@ -592,17 +699,41 @@ fn retry_banner_spans(max_width: usize, props: &FooterProps) -> Option<Vec<Span<
             // countdown ticks visually without us having to schedule
             // anything extra.
             (
-                format!("⟳ retry {} in {secs}s — {}", banner.attempt, banner.reason),
-                crate::palette::STATUS_WARNING,
+                retry_active_label(
+                    banner.attempt,
+                    secs,
+                    &banner.reason,
+                    palette::ascii_ui_enabled(),
+                ),
+                props.warning_color,
             )
         }
         crate::retry_status::RetryState::Failed { reason, .. } => {
-            (format!("× failed: {reason}"), crate::palette::STATUS_ERROR)
+            (
+                retry_failed_label(reason, palette::ascii_ui_enabled()),
+                props.error_color,
+            )
         }
         crate::retry_status::RetryState::Idle => return None,
     };
     let truncated = truncate_to_width(&label, max_width);
     Some(vec![Span::styled(truncated, Style::default().fg(color))])
+}
+
+fn retry_active_label(attempt: u32, secs: u64, reason: &str, ascii: bool) -> String {
+    if ascii {
+        format!("retry {attempt} in {secs}s - {reason}")
+    } else {
+        format!("⟳ retry {attempt} in {secs}s — {reason}")
+    }
+}
+
+fn retry_failed_label(reason: &str, ascii: bool) -> String {
+    if ascii {
+        format!("failed: {reason}")
+    } else {
+        format!("× failed: {reason}")
+    }
 }
 
 impl Renderable for FooterWidget {
@@ -647,8 +778,12 @@ impl Renderable for FooterWidget {
         // spout strip; otherwise the gap stays as plain whitespace.
         let spacer_span = match self.props.working_strip_frame {
             Some(frame) if spacer_width > 0 => Span::styled(
-                footer_working_strip_string(spacer_width, frame),
-                Style::default().fg(palette::DEEPSEEK_SKY),
+                footer_working_strip_string_with_ascii(
+                    spacer_width,
+                    frame,
+                    palette::ascii_ui_enabled(),
+                ),
+                Style::default().fg(self.props.state_color),
             ),
             _ => Span::raw(" ".repeat(spacer_width)),
         };
@@ -679,7 +814,7 @@ fn truncate_to_width(text: &str, max_width: usize) -> String {
         return text.to_string();
     }
     if max_width <= 3 {
-        return text.chars().take(max_width).collect();
+        return ".".repeat(max_width);
     }
 
     let mut out = String::new();
@@ -741,7 +876,7 @@ mod tests {
         app.model = "deepseek-v4-flash".to_string();
         app.auto_model = false;
         app.api_provider = crate::config::ApiProvider::Deepseek;
-        // Same for theme: tests below assert against the default dark palette,
+        // Same for theme: tests below assert against the pinned UI theme,
         // but App::new honors saved settings.toml values on the host machine.
         app.theme_id = crate::palette::ThemeId::Whale;
         app.ui_theme = crate::palette::UI_THEME;
@@ -753,7 +888,7 @@ mod tests {
             app,
             None,
             "ready",
-            palette::TEXT_MUTED,
+            app.ui_theme.status_ready,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -774,12 +909,12 @@ mod tests {
         let props = idle_props_for(&app);
 
         assert_eq!(props.state_label, "ready");
-        assert_eq!(props.state_color, palette::TEXT_MUTED);
+        assert_eq!(props.state_color, app.ui_theme.status_ready);
         assert_eq!(props.mode_label, "agent");
-        assert_eq!(props.mode_color, palette::MODE_AGENT);
-        assert_eq!(props.text_dim_color, palette::TEXT_DIM);
-        assert_eq!(props.text_hint_color, palette::TEXT_HINT);
-        assert_eq!(props.text_muted_color, palette::TEXT_MUTED);
+        assert_eq!(props.mode_color, app.ui_theme.mode_agent);
+        assert_eq!(props.text_dim_color, app.ui_theme.text_dim);
+        assert_eq!(props.text_hint_color, app.ui_theme.text_hint);
+        assert_eq!(props.text_muted_color, app.ui_theme.text_muted);
         assert_eq!(props.model, "deepseek-v4-flash");
         assert!(props.coherence.is_empty());
         assert!(props.agents.is_empty());
@@ -866,7 +1001,7 @@ mod tests {
             &app,
             None,
             "thinking \u{238B}",
-            palette::STATUS_WARNING,
+            app.ui_theme.status_warning,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -876,7 +1011,7 @@ mod tests {
         );
 
         assert!(props.state_label.starts_with("thinking"));
-        assert_eq!(props.state_color, palette::STATUS_WARNING);
+        assert_eq!(props.state_color, app.ui_theme.status_warning);
     }
 
     #[test]
@@ -935,6 +1070,21 @@ mod tests {
     }
 
     #[test]
+    fn footer_agents_chip_can_use_theme_status_color() {
+        let chip = super::footer_agents_chip_with_color(2, Locale::En, Color::Indexed(99));
+        assert_eq!(chip[0].style.fg, Some(Color::Indexed(99)));
+    }
+
+    #[test]
+    fn footer_shell_chip_has_ascii_fallback_and_theme_color() {
+        let chip = super::footer_shell_chip_with_color(true, Color::Indexed(214), true);
+        let text: String = chip.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "> shell running");
+        assert!(text.is_ascii());
+        assert_eq!(chip[0].style.fg, Some(Color::Indexed(214)));
+    }
+
+    #[test]
     fn footer_agents_chip_renders_into_widget() {
         let app = make_app();
         let agents = super::footer_agents_chip(2, Locale::En);
@@ -942,7 +1092,7 @@ mod tests {
             &app,
             None,
             "ready",
-            palette::TEXT_MUTED,
+            app.ui_theme.status_ready,
             Vec::<Span<'static>>::new(),
             agents,
             Vec::<Span<'static>>::new(),
@@ -964,10 +1114,14 @@ mod tests {
     #[test]
     fn from_app_mode_color_matches_mode_for_each_variant() {
         let mut app = make_app();
+        app.ui_theme.mode_agent = Color::Rgb(1, 2, 3);
+        app.ui_theme.mode_yolo = Color::Rgb(4, 5, 6);
+        app.ui_theme.mode_plan = Color::Rgb(7, 8, 9);
+
         let cases = [
-            (AppMode::Agent, "agent", palette::MODE_AGENT),
-            (AppMode::Yolo, "yolo", palette::MODE_YOLO),
-            (AppMode::Plan, "plan", palette::MODE_PLAN),
+            (AppMode::Agent, "agent", app.ui_theme.mode_agent),
+            (AppMode::Yolo, "yolo", app.ui_theme.mode_yolo),
+            (AppMode::Plan, "plan", app.ui_theme.mode_plan),
         ];
         for (mode, expected_label, expected_color) in cases {
             app.mode = mode;
@@ -1001,7 +1155,7 @@ mod tests {
         let spans = super::footer_mcp_chip(Some(3), 3);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "MCP 3/3");
-        assert_eq!(spans[0].style.fg, Some(palette::STATUS_SUCCESS));
+        assert_eq!(spans[0].style.fg, Some(active_theme().status_success_color));
     }
 
     #[test]
@@ -1009,7 +1163,10 @@ mod tests {
         let spans = super::footer_mcp_chip(Some(2), 3);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "MCP 2/3");
-        assert_eq!(spans[0].style.fg, Some(palette::STATUS_WARNING));
+        assert_eq!(
+            spans[0].style.fg,
+            Some(active_theme().status_warning_color)
+        );
     }
 
     #[test]
@@ -1017,7 +1174,72 @@ mod tests {
         let spans = super::footer_mcp_chip(Some(0), 3);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "MCP 0/3");
-        assert_eq!(spans[0].style.fg, Some(palette::STATUS_ERROR));
+        assert_eq!(spans[0].style.fg, Some(active_theme().status_error_color));
+    }
+
+    #[test]
+    fn footer_mcp_chip_default_wrapper_follows_active_theme() {
+        let mut ui_theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        ui_theme.success = Color::Indexed(42);
+        let theme =
+            crate::deepseek_theme::Theme::from_ui_theme(palette::ThemeId::DeepSeekShell, ui_theme);
+
+        crate::deepseek_theme::with_active_theme(theme, || {
+            let spans = super::footer_mcp_chip(Some(1), 1);
+            assert_eq!(spans[0].style.fg, Some(Color::Indexed(42)));
+        });
+    }
+
+    #[test]
+    fn footer_mcp_chip_can_use_theme_status_colors() {
+        let mut theme = palette::UI_THEME;
+        theme.text_muted = Color::Indexed(8);
+        theme.success = Color::Indexed(2);
+        theme.status_warning = Color::Indexed(3);
+        theme.error_fg = Color::Indexed(1);
+
+        assert_eq!(
+            super::footer_mcp_chip_with_theme(None, 2, &theme)[0].style.fg,
+            Some(Color::Indexed(8))
+        );
+        assert_eq!(
+            super::footer_mcp_chip_with_theme(Some(2), 2, &theme)[0]
+                .style
+                .fg,
+            Some(Color::Indexed(2))
+        );
+        assert_eq!(
+            super::footer_mcp_chip_with_theme(Some(1), 2, &theme)[0]
+                .style
+                .fg,
+            Some(Color::Indexed(3))
+        );
+        assert_eq!(
+            super::footer_mcp_chip_with_theme(Some(0), 2, &theme)[0]
+                .style
+                .fg,
+            Some(Color::Indexed(1))
+        );
+    }
+
+    #[test]
+    fn retry_banner_labels_have_ascii_fallbacks() {
+        let active = super::retry_active_label(2, 7, "rate limited", true);
+        let failed = super::retry_failed_label("upstream 500", true);
+
+        assert_eq!(active, "retry 2 in 7s - rate limited");
+        assert_eq!(failed, "failed: upstream 500");
+        assert!(active.is_ascii());
+        assert!(failed.is_ascii());
+
+        assert_eq!(
+            super::retry_active_label(2, 7, "rate limited", false),
+            "⟳ retry 2 in 7s — rate limited"
+        );
+        assert_eq!(
+            super::retry_failed_label("upstream 500", false),
+            "× failed: upstream 500"
+        );
     }
 
     #[test]
@@ -1087,24 +1309,66 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_shell_footer_fits_80_columns_on_one_row() {
+        let mut app = make_app();
+        app.theme_id = crate::palette::ThemeId::DeepSeekShell;
+        app.ui_theme = crate::palette::DEEPSEEK_SHELL_UI_THEME;
+
+        let mut props = FooterProps::from_app(
+            &app,
+            None,
+            "ready",
+            app.ui_theme.status_ready,
+            Vec::<Span<'static>>::new(),
+            Vec::<Span<'static>>::new(),
+            Vec::<Span<'static>>::new(),
+            Vec::<Span<'static>>::new(),
+            Vec::<Span<'static>>::new(),
+            Vec::<Span<'static>>::new(),
+        );
+        props.retry = crate::retry_status::RetryState::Idle;
+        let widget = FooterWidget::new(props);
+        let area = ratatui::layout::Rect::new(0, 0, 80, 1);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+
+        widget.render(area, &mut buf);
+        let rendered: String = (0..area.width).map(|x| buf[(x, 0)].symbol()).collect();
+
+        assert_eq!(rendered.width(), 80);
+        assert!(rendered.contains("agent"), "{rendered:?}");
+        assert!(rendered.contains("deepseek-v4-flash"), "{rendered:?}");
+        for x in 0..area.width {
+            assert_eq!(buf[(x, 0)].bg, app.ui_theme.footer_bg);
+        }
+    }
+
+    #[test]
     fn working_strip_string_width_matches_request() {
         // The strip must produce exactly `width` characters per frame —
         // otherwise the spacer math in `FooterWidget::render` would
         // mis-align the right-hand chips. Each wave glyph is one cell wide.
         for width in [0usize, 1, 8, 60, 200] {
-            let s = super::footer_working_strip_string(width, 7);
+            let s = super::footer_working_strip_string_with_ascii(width, 7, false);
             assert_eq!(s.chars().count(), width, "width {width} mismatch");
         }
+    }
+
+    #[test]
+    fn working_strip_ascii_fallback_stays_plain_ascii() {
+        let s = super::footer_working_strip_string_with_ascii(40, 160, true);
+        assert_eq!(s.chars().count(), 40);
+        assert!(s.is_ascii());
+        assert!(s.chars().all(|glyph| matches!(glyph, '-' | '=' | '~')));
     }
 
     #[test]
     fn working_strip_glyph_is_deterministic_per_frame() {
         // Same (col, width, frame) -> same glyph. Frames are raw
         // milliseconds so the strip can move at repaint cadence.
-        let a = super::footer_working_strip_string(40, 150);
-        let b = super::footer_working_strip_string(40, 150);
+        let a = super::footer_working_strip_string_with_ascii(40, 150, false);
+        let b = super::footer_working_strip_string_with_ascii(40, 150, false);
         assert_eq!(a, b, "deterministic given the same frame");
-        let c = super::footer_working_strip_string(40, 230);
+        let c = super::footer_working_strip_string_with_ascii(40, 230, false);
         assert_ne!(a, c, "advancing one repaint window must change the strip",);
     }
 
@@ -1129,19 +1393,26 @@ mod tests {
             idle, active,
             "active footer must visibly differ from idle one"
         );
-        assert!(
-            active
-                .chars()
-                .any(|glyph| super::WAVE_GLYPHS.contains(&glyph)),
-            "active strip must contain at least one animation glyph: {active:?}",
-        );
+        if palette::ascii_ui_enabled() {
+            assert!(
+                active.chars().any(|glyph| matches!(glyph, '-' | '=' | '~')),
+                "active ASCII strip must contain fallback animation glyphs: {active:?}",
+            );
+        } else {
+            assert!(
+                active
+                    .chars()
+                    .any(|glyph| super::WAVE_GLYPHS.contains(&glyph)),
+                "active strip must contain at least one animation glyph: {active:?}",
+            );
+        }
     }
 
     #[test]
     fn working_strip_changes_at_repaint_cadence() {
         let width = 60;
-        let f0 = super::footer_working_strip_string(width, 0);
-        let f80 = super::footer_working_strip_string(width, 80);
+        let f0 = super::footer_working_strip_string_with_ascii(width, 0, false);
+        let f80 = super::footer_working_strip_string_with_ascii(width, 80, false);
         let changed = f0
             .chars()
             .zip(f80.chars())
@@ -1155,7 +1426,7 @@ mod tests {
 
     #[test]
     fn working_strip_renders_multiple_wave_heights() {
-        let s = super::footer_working_strip_string(60, 0);
+        let s = super::footer_working_strip_string_with_ascii(60, 0, false);
         let mut distinct = Vec::new();
         for glyph in s.chars() {
             if super::WAVE_GLYPHS.contains(&glyph) && !distinct.contains(&glyph) {
@@ -1185,6 +1456,16 @@ mod tests {
         assert_eq!(super::footer_working_label(7, Locale::En), "working...");
     }
 
+    #[test]
+    fn footer_separator_respects_ascii_fallback_shape() {
+        let sep = super::footer_separator();
+        if palette::ascii_ui_enabled() {
+            assert_eq!(sep, " | ");
+        } else {
+            assert_eq!(sep, " \u{00B7} ");
+        }
+    }
+
     /// Render the footer at `width` and return the visible single-line text.
     fn render_at_width(props: FooterProps, width: u16) -> String {
         let area = ratatui::layout::Rect::new(0, 0, width, 1);
@@ -1205,7 +1486,7 @@ mod tests {
             // Production state labels are `&'static str`; for tests we leak a
             // copy to match that lifetime.
             Box::leak(state.to_string().into_boxed_str()),
-            palette::DEEPSEEK_SKY,
+            app.ui_theme.status_working,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -1296,13 +1577,39 @@ mod tests {
         assert!(!line.contains("working"), "status dropped: {line:?}");
     }
 
+    #[test]
+    fn truncate_to_width_respects_cjk_for_tiny_widths() {
+        for max_width in 0..=3 {
+            let truncated =
+                super::truncate_to_width("\u{4fee}\u{590d}\u{7ec8}\u{7aef}\u{5e03}\u{5c40}", max_width);
+
+            assert!(
+                UnicodeWidthStr::width(truncated.as_str()) <= max_width,
+                "truncated footer text overflowed {max_width} columns: {truncated:?}"
+            );
+            assert!(
+                truncated.is_char_boundary(truncated.len()),
+                "truncated footer text must not split UTF-8 codepoints: {truncated:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_to_width_preserves_exact_budget_before_ellipsis() {
+        let truncated =
+            super::truncate_to_width("\u{4fee}\u{590d}\u{7ec8}\u{7aef}\u{5e03}\u{5c40}", 7);
+
+        assert_eq!(truncated, "\u{4fee}\u{590d}...");
+        assert_eq!(UnicodeWidthStr::width(truncated.as_str()), 7);
+    }
+
     fn props_with_status_and_cost(state: &str, cost: &str) -> FooterProps {
         let app = make_app();
         FooterProps::from_app(
             &app,
             None,
             Box::leak(state.to_string().into_boxed_str()),
-            palette::DEEPSEEK_SKY,
+            app.ui_theme.status_working,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -1323,7 +1630,7 @@ mod tests {
             &app,
             None,
             "ready",
-            palette::TEXT_MUTED,
+            app.ui_theme.status_ready,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -1356,7 +1663,7 @@ mod tests {
             &app,
             None,
             "ready",
-            palette::TEXT_MUTED,
+            app.ui_theme.status_ready,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
@@ -1421,7 +1728,7 @@ mod tests {
             &app,
             Some(toast),
             "ready",
-            palette::TEXT_MUTED,
+            app.ui_theme.status_ready,
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),
             Vec::<Span<'static>>::new(),

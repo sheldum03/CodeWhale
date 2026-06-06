@@ -36,6 +36,7 @@ const STATUS_INDICATOR_WHALE_FRAMES: &[&str] = &[
 
 /// Geometric replacement frames shipped between v0.8.x and v0.8.29.
 const STATUS_INDICATOR_DOT_FRAMES: &[&str] = &["◍", "◉", "◌", "◌", "◉", "◍"];
+const STATUS_INDICATOR_ASCII_FRAMES: &[&str] = &[".", "..", "...", ".."];
 
 /// Resolve the current status-indicator frame to render in the header
 /// chip cluster.
@@ -53,17 +54,93 @@ pub fn header_status_indicator_frame(
     turn_started_at: Option<Instant>,
     mode: &str,
 ) -> Option<&'static str> {
-    let frames: &[&str] = match mode.trim().to_ascii_lowercase().as_str() {
-        "off" | "none" | "hidden" | "false" => return None,
-        "dots" | "dot" => STATUS_INDICATOR_DOT_FRAMES,
-        // "whale" + aliases + unknown → whale (intentional default).
-        _ => STATUS_INDICATOR_WHALE_FRAMES,
+    header_status_indicator_frame_with_ascii(turn_started_at, mode, palette::ascii_ui_enabled())
+}
+
+#[must_use]
+pub fn header_status_indicator_frame_for_theme(
+    turn_started_at: Option<Instant>,
+    mode: &str,
+    theme_id: palette::ThemeId,
+) -> Option<&'static str> {
+    let normalized = mode.trim().to_ascii_lowercase();
+    if theme_id == palette::ThemeId::DeepSeekShell
+        && !matches!(
+            normalized.as_str(),
+            "off" | "none" | "hidden" | "false" | "dots" | "dot"
+        )
+    {
+        return header_status_indicator_frame(turn_started_at, "dots");
+    }
+
+    header_status_indicator_frame(turn_started_at, mode)
+}
+
+fn header_status_indicator_frame_with_ascii(
+    turn_started_at: Option<Instant>,
+    mode: &str,
+    ascii: bool,
+) -> Option<&'static str> {
+    let normalized = mode.trim().to_ascii_lowercase();
+    if matches!(normalized.as_str(), "off" | "none" | "hidden" | "false") {
+        return None;
+    }
+    let frames: &[&str] = if ascii {
+        STATUS_INDICATOR_ASCII_FRAMES
+    } else {
+        match normalized.as_str() {
+            "dots" | "dot" => STATUS_INDICATOR_DOT_FRAMES,
+            // "whale" + aliases + unknown -> whale (intentional default).
+            _ => STATUS_INDICATOR_WHALE_FRAMES,
+        }
     };
     let elapsed_ms = turn_started_at
         .map(|t| t.elapsed().as_millis())
         .unwrap_or(0);
     let idx = (elapsed_ms / STATUS_INDICATOR_FRAME_MS) as usize % frames.len();
     Some(frames[idx])
+}
+
+fn header_separator() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " · "
+    }
+}
+
+fn header_live_glyph() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "*"
+    } else {
+        "\u{25CF}"
+    }
+}
+
+fn header_effort_prefix(max_effort: bool) -> &'static str {
+    if palette::ascii_ui_enabled() {
+        if max_effort { "!" } else { "." }
+    } else if max_effort {
+        "\u{25C6}"
+    } else {
+        "\u{00B7}"
+    }
+}
+
+fn context_signal_filled() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "#"
+    } else {
+        "\u{25B0}"
+    }
+}
+
+fn context_signal_empty() -> &'static str {
+    if palette::ascii_ui_enabled() {
+        "-"
+    } else {
+        "\u{25B1}"
+    }
 }
 
 /// Data required to render the header bar.
@@ -73,6 +150,7 @@ pub struct HeaderData<'a> {
     pub mode: AppMode,
     pub is_streaming: bool,
     pub background: ratatui::style::Color,
+    pub ui_theme: palette::UiTheme,
     /// Total tokens used in this session (cumulative, for display).
     pub total_tokens: u32,
     /// Context window size for the model (if known).
@@ -114,6 +192,7 @@ impl<'a> HeaderData<'a> {
             mode,
             is_streaming,
             background,
+            ui_theme: palette::UI_THEME,
             total_tokens: 0,
             context_window: None,
             session_cost: 0.0,
@@ -137,6 +216,15 @@ impl<'a> HeaderData<'a> {
     #[must_use]
     pub fn with_status_indicator(mut self, frame: Option<&'static str>) -> Self {
         self.status_indicator_frame = frame;
+        self
+    }
+
+    /// Attach the active UI theme so header text/status colors follow
+    /// `/theme` instead of the legacy global palette constants.
+    #[must_use]
+    pub fn with_ui_theme(mut self, ui_theme: palette::UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self.background = ui_theme.header_bg;
         self
     }
 
@@ -176,11 +264,11 @@ impl<'a> HeaderWidget<'a> {
         Self { data }
     }
 
-    fn mode_color(mode: AppMode) -> Color {
+    fn mode_color(&self, mode: AppMode) -> Color {
         match mode {
-            AppMode::Agent => palette::MODE_AGENT,
-            AppMode::Yolo => palette::MODE_YOLO,
-            AppMode::Plan => palette::MODE_PLAN,
+            AppMode::Agent => self.data.ui_theme.mode_agent,
+            AppMode::Yolo => self.data.ui_theme.mode_yolo,
+            AppMode::Plan => self.data.ui_theme.mode_plan,
         }
     }
 
@@ -233,13 +321,13 @@ impl<'a> HeaderWidget<'a> {
         Some((used / max * 100.0).clamp(0.0, 100.0))
     }
 
-    fn context_color(percent: f64) -> Color {
+    fn context_color(&self, percent: f64) -> Color {
         if percent >= CONTEXT_CRITICAL_THRESHOLD_PERCENT {
-            palette::STATUS_ERROR
+            self.data.ui_theme.error_fg
         } else if percent >= CONTEXT_WARNING_THRESHOLD_PERCENT {
-            palette::STATUS_WARNING
+            self.data.ui_theme.status_warning
         } else {
-            palette::DEEPSEEK_SKY
+            self.data.ui_theme.status_working
         }
     }
 
@@ -248,7 +336,7 @@ impl<'a> HeaderWidget<'a> {
             return Vec::new();
         };
 
-        let color = Self::context_color(percent);
+        let color = self.context_color(percent);
         let filled = ((percent / 100.0) * CONTEXT_SIGNAL_WIDTH as f64)
             .ceil()
             .clamp(0.0, CONTEXT_SIGNAL_WIDTH as f64) as usize;
@@ -262,10 +350,13 @@ impl<'a> HeaderWidget<'a> {
             ));
             spans.push(Span::raw(" "));
         }
-        spans.push(Span::styled("▰".repeat(filled), Style::default().fg(color)));
         spans.push(Span::styled(
-            "▱".repeat(empty),
-            Style::default().fg(palette::BORDER_COLOR),
+            context_signal_filled().repeat(filled),
+            Style::default().fg(color),
+        ));
+        spans.push(Span::styled(
+            context_signal_empty().repeat(empty),
+            Style::default().fg(self.data.ui_theme.border),
         ));
         spans
     }
@@ -277,7 +368,7 @@ impl<'a> HeaderWidget<'a> {
 
         vec![Span::styled(
             format!("{percent:.0}%"),
-            Style::default().fg(Self::context_color(percent)),
+            Style::default().fg(self.context_color(percent)),
         )]
     }
 
@@ -289,7 +380,7 @@ impl<'a> HeaderWidget<'a> {
         // the chip visually grouped with `● Live` and the effort label.
         vec![Span::styled(
             frame.to_string(),
-            Style::default().fg(palette::DEEPSEEK_SKY),
+            Style::default().fg(self.data.ui_theme.status_working),
         )]
     }
 
@@ -304,7 +395,7 @@ impl<'a> HeaderWidget<'a> {
         vec![Span::styled(
             trimmed.to_string(),
             Style::default()
-                .fg(palette::DEEPSEEK_SKY)
+                .fg(self.data.ui_theme.status_working)
                 .add_modifier(Modifier::BOLD),
         )]
     }
@@ -319,9 +410,9 @@ impl<'a> HeaderWidget<'a> {
         }
         let is_off = trimmed.eq_ignore_ascii_case("off");
         let color = if is_off {
-            palette::TEXT_HINT
+            self.data.ui_theme.text_hint
         } else {
-            palette::DEEPSEEK_SKY
+            self.data.ui_theme.status_working
         };
         let body = if !include_prefix {
             trimmed.to_string()
@@ -329,9 +420,9 @@ impl<'a> HeaderWidget<'a> {
             // Use a non-emoji diamond (U+25C6, always 1 column) instead of an
             // SMP emoji whose rendered width is inconsistent across terminals
             // (cmd/PowerShell, WezTerm, Alacritty). See issue #1314.
-            format!("\u{25C6} {trimmed}")
+            format!("{} {trimmed}", header_effort_prefix(true))
         } else {
-            format!("\u{00B7} {trimmed}")
+            format!("{} {trimmed}", header_effort_prefix(false))
         };
         vec![Span::styled(body, Style::default().fg(color))]
     }
@@ -377,16 +468,16 @@ impl<'a> HeaderWidget<'a> {
                 spans.push(Span::raw("  "));
             }
             spans.push(Span::styled(
-                "●",
+                header_live_glyph(),
                 Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(self.data.ui_theme.status_working)
                     .add_modifier(Modifier::BOLD),
             ));
             if show_stream_label {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     "Live",
-                    Style::default().fg(palette::TEXT_SOFT),
+                    Style::default().fg(self.data.ui_theme.text_soft),
                 ));
             }
         }
@@ -414,14 +505,14 @@ impl<'a> HeaderWidget<'a> {
         format!("v{}", env!("CARGO_PKG_VERSION"))
     }
 
-    fn version_spans(prefix_existing: bool) -> Vec<Span<'static>> {
+    fn version_spans(&self, prefix_existing: bool) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
         if prefix_existing {
             spans.push(Span::raw("  "));
         }
         spans.push(Span::styled(
             Self::version_label(),
-            Style::default().fg(palette::TEXT_HINT),
+            Style::default().fg(self.data.ui_theme.text_hint),
         ));
         spans
     }
@@ -435,7 +526,7 @@ impl<'a> HeaderWidget<'a> {
         let pinned = |status: Vec<Span<'static>>| {
             let prefix = !status.is_empty();
             let mut combined = status;
-            combined.extend(Self::version_spans(prefix));
+            combined.extend(self.version_spans(prefix));
             combined
         };
 
@@ -448,7 +539,7 @@ impl<'a> HeaderWidget<'a> {
             self.status_variant(false, true, true),
             self.status_variant(false, true, false),
             self.status_variant(false, false, true),
-            Self::version_spans(false),
+            self.version_spans(false),
         ];
 
         candidates
@@ -468,26 +559,30 @@ impl<'a> HeaderWidget<'a> {
         if workspace.is_empty() {
             return vec![Span::styled(
                 Self::truncate_to_width(model, max_width),
-                Style::default().fg(palette::TEXT_HINT),
+                Style::default().fg(self.data.ui_theme.text_hint),
             )];
         }
 
         if model.is_empty() || max_width < 12 {
             return vec![Span::styled(
                 Self::truncate_to_width(workspace, max_width),
-                Style::default().fg(palette::TEXT_SECONDARY),
+                Style::default().fg(self.data.ui_theme.text_muted),
             )];
         }
 
-        let separator_width = 3; // " · "
+        let separator = header_separator();
+        let separator_width = separator.width();
         if workspace.width() + separator_width + model.width() <= max_width {
             return vec![
                 Span::styled(
                     workspace.to_string(),
-                    Style::default().fg(palette::TEXT_SECONDARY),
+                    Style::default().fg(self.data.ui_theme.text_soft),
                 ),
-                Span::styled(" · ", Style::default().fg(palette::TEXT_HINT)),
-                Span::styled(model.to_string(), Style::default().fg(palette::TEXT_HINT)),
+                Span::styled(separator.to_string(), Style::default().fg(self.data.ui_theme.text_hint)),
+                Span::styled(
+                    model.to_string(),
+                    Style::default().fg(self.data.ui_theme.text_hint),
+                ),
             ];
         }
 
@@ -495,7 +590,7 @@ impl<'a> HeaderWidget<'a> {
         if content_width < 9 {
             return vec![Span::styled(
                 Self::truncate_to_width(workspace, max_width),
-                Style::default().fg(palette::TEXT_SECONDARY),
+                Style::default().fg(self.data.ui_theme.text_muted),
             )];
         }
 
@@ -514,12 +609,12 @@ impl<'a> HeaderWidget<'a> {
         vec![
             Span::styled(
                 Self::truncate_to_width(workspace, workspace_budget),
-                Style::default().fg(palette::TEXT_SECONDARY),
+                Style::default().fg(self.data.ui_theme.text_soft),
             ),
-            Span::styled(" · ", Style::default().fg(palette::TEXT_HINT)),
+            Span::styled(separator.to_string(), Style::default().fg(self.data.ui_theme.text_hint)),
             Span::styled(
                 Self::truncate_to_width(model, model_budget),
-                Style::default().fg(palette::TEXT_HINT),
+                Style::default().fg(self.data.ui_theme.text_hint),
             ),
         ]
     }
@@ -531,7 +626,7 @@ impl<'a> HeaderWidget<'a> {
 
         let mode_label = Self::mode_name(self.data.mode);
         let mode_style = Style::default()
-            .fg(Self::mode_color(self.data.mode))
+            .fg(self.mode_color(self.data.mode))
             .add_modifier(Modifier::BOLD);
 
         if max_width < mode_label.width() {
@@ -602,7 +697,8 @@ mod tests {
     use super::{HeaderData, HeaderWidget, Renderable};
     use crate::palette;
     use crate::tui::app::AppMode;
-    use ratatui::{buffer::Buffer, layout::Rect};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+    use unicode_width::UnicodeWidthStr;
 
     fn render_header(data: HeaderData<'_>, width: u16) -> String {
         let widget = HeaderWidget::new(data);
@@ -613,6 +709,36 @@ mod tests {
         (0..width).map(|x| buf[(x, 0)].symbol()).collect::<String>()
     }
 
+    fn render_header_buffer(data: HeaderData<'_>, width: u16) -> Buffer {
+        let widget = HeaderWidget::new(data);
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+        buf
+    }
+
+    #[test]
+    fn header_colors_can_use_active_ui_theme() {
+        let mut theme = palette::UI_THEME;
+        theme.header_bg = Color::Rgb(1, 2, 3);
+        theme.mode_agent = Color::Rgb(4, 5, 6);
+        theme.text_soft = Color::Rgb(7, 8, 9);
+        theme.text_hint = Color::Rgb(10, 11, 12);
+
+        let buf = render_header_buffer(
+            HeaderData::new(AppMode::Agent, "model", "work", false, palette::UI_THEME.header_bg)
+                .with_ui_theme(theme),
+            40,
+        );
+
+        assert_eq!(buf[(0, 0)].fg, theme.mode_agent);
+        assert_eq!(buf[(0, 0)].bg, theme.header_bg);
+        assert_eq!(buf[(7, 0)].symbol(), "w");
+        assert_eq!(buf[(7, 0)].fg, theme.text_soft);
+        assert_eq!(buf[(14, 0)].symbol(), "m");
+        assert_eq!(buf[(14, 0)].fg, theme.text_hint);
+    }
+
     #[test]
     fn wide_header_shows_plain_mode_and_single_metadata_cluster() {
         let rendered = render_header(
@@ -621,7 +747,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             ),
             72,
         );
@@ -631,6 +757,28 @@ mod tests {
         assert!(rendered.contains("deepseek-v4-pro"));
         assert!(!rendered.contains("Plan"));
         assert!(!rendered.contains("Yolo"));
+    }
+
+    #[test]
+    fn deepseek_shell_header_keeps_core_labels_at_80_columns() {
+        let rendered = render_header(
+            HeaderData::new(
+                AppMode::Agent,
+                "deepseek-v4-pro",
+                "codewhale-tui",
+                true,
+                palette::DEEPSEEK_SHELL_UI_THEME.header_bg,
+            )
+            .with_ui_theme(palette::DEEPSEEK_SHELL_UI_THEME)
+            .with_usage(42_000, Some(128_000), 0.0, Some(48_000)),
+            80,
+        );
+
+        assert_eq!(rendered.width(), 80);
+        assert!(rendered.contains("Agent"), "{rendered:?}");
+        assert!(rendered.contains("codewhale-tui"), "{rendered:?}");
+        assert!(rendered.contains("deepseek-v4-pro"), "{rendered:?}");
+        assert!(rendered.contains("38%"), "{rendered:?}");
     }
 
     #[test]
@@ -644,7 +792,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             ),
             120,
         );
@@ -665,7 +813,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 true,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_usage(1_000, Some(128_000), 0.0, Some(2_000)),
             12,
@@ -689,7 +837,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "workspace",
                 true,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_usage(42_000, Some(128_000), 0.0, Some(48_000)),
             72,
@@ -697,13 +845,13 @@ mod tests {
 
         assert!(rendered.contains("Live"));
         assert!(rendered.contains("38%"));
-        assert!(rendered.contains("▰"));
+        assert!(rendered.contains(super::context_signal_filled()));
     }
 
     #[test]
     fn narrow_header_keeps_context_percent_visible() {
         let rendered = render_header(
-            HeaderData::new(AppMode::Agent, "", "", true, palette::DEEPSEEK_INK).with_usage(
+            HeaderData::new(AppMode::Agent, "", "", true, palette::UI_THEME.header_bg).with_usage(
                 0,
                 Some(128_000),
                 0.0,
@@ -723,7 +871,7 @@ mod tests {
                 "deepseek-v4-flash",
                 "repo",
                 true,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_usage(1_000, Some(10_000), 0.0, Some(4_000)),
             8,
@@ -742,13 +890,13 @@ mod tests {
                 "deepseek-v4-flash",
                 "repo",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             ),
             48,
         );
 
         assert!(!rendered.contains('%'));
-        assert!(!rendered.contains("▰"));
+        assert!(!rendered.contains(super::context_signal_filled()));
     }
 
     #[test]
@@ -759,7 +907,7 @@ mod tests {
                 "deepseek-v4-flash",
                 "repo",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_usage(1_000, Some(128_000), 0.0, Some(320_000)),
             48,
@@ -777,7 +925,7 @@ mod tests {
                 "deepseek-ai/deepseek-v4-flash",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_provider(Some("NIM")),
             72,
@@ -796,7 +944,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             ),
             72,
         );
@@ -837,6 +985,33 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_shell_indicator_defaults_to_geometric_frames() {
+        let frame = super::header_status_indicator_frame_for_theme(
+            None,
+            "whale",
+            palette::ThemeId::DeepSeekShell,
+        );
+        assert_eq!(frame, Some("\u{25CD}"));
+    }
+
+    #[test]
+    fn deepseek_shell_indicator_still_honors_off() {
+        let frame = super::header_status_indicator_frame_for_theme(
+            None,
+            "off",
+            palette::ThemeId::DeepSeekShell,
+        );
+        assert!(frame.is_none());
+    }
+
+    #[test]
+    fn non_deepseek_shell_indicator_keeps_whale_default() {
+        let frame =
+            super::header_status_indicator_frame_for_theme(None, "whale", palette::ThemeId::Whale);
+        assert_eq!(frame, Some("🐳"));
+    }
+
+    #[test]
     fn off_indicator_returns_none_so_chip_is_hidden() {
         assert!(super::header_status_indicator_frame(None, "off").is_none());
         // Aliases mirror the parser in Settings.
@@ -854,6 +1029,33 @@ mod tests {
     }
 
     #[test]
+    fn ascii_ui_indicator_uses_plain_ascii_frames() {
+        let frame = super::header_status_indicator_frame_with_ascii(None, "whale", true);
+        assert_eq!(frame, Some("."));
+        assert!(frame.unwrap().is_ascii());
+        assert!(super::header_status_indicator_frame_with_ascii(None, "off", true).is_none());
+    }
+
+    #[test]
+    fn header_inline_symbols_have_ascii_fallback() {
+        if palette::ascii_ui_enabled() {
+            assert_eq!(super::header_separator(), " - ");
+            assert_eq!(super::header_live_glyph(), "*");
+            assert_eq!(super::header_effort_prefix(true), "!");
+            assert_eq!(super::header_effort_prefix(false), ".");
+            assert_eq!(super::context_signal_filled(), "#");
+            assert_eq!(super::context_signal_empty(), "-");
+        } else {
+            assert_eq!(super::header_separator(), " · ");
+            assert_eq!(super::header_live_glyph(), "\u{25CF}");
+            assert_eq!(super::header_effort_prefix(true), "\u{25C6}");
+            assert_eq!(super::header_effort_prefix(false), "\u{00B7}");
+            assert_eq!(super::context_signal_filled(), "\u{25B0}");
+            assert_eq!(super::context_signal_empty(), "\u{25B1}");
+        }
+    }
+
+    #[test]
     fn header_renders_whale_chip_next_to_effort_label() {
         let rendered = render_header(
             HeaderData::new(
@@ -861,7 +1063,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_reasoning_effort(Some("max"))
             .with_status_indicator(Some("🐳")),
@@ -892,7 +1094,7 @@ mod tests {
                 "deepseek-v4-pro",
                 "codewhale-tui",
                 false,
-                palette::DEEPSEEK_INK,
+                palette::UI_THEME.header_bg,
             )
             .with_reasoning_effort(Some("max"))
             .with_status_indicator(None),

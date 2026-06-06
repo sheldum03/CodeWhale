@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use std::time::Instant;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::palette;
+use crate::palette::{self, UiTheme};
 
 pub mod chunking;
 pub mod commit_tick;
@@ -34,6 +34,8 @@ pub struct MarkdownStreamCollector {
     is_streaming: bool,
     /// Whether this is a thinking block
     is_thinking: bool,
+    /// UI theme sampled from App so streaming thinking uses active colors.
+    ui_theme: UiTheme,
 }
 
 impl Default for MarkdownStreamCollector {
@@ -53,7 +55,17 @@ impl MarkdownStreamCollector {
             width,
             is_streaming: true,
             is_thinking,
+            ui_theme: palette::UI_THEME,
         }
+    }
+
+    pub fn with_ui_theme(mut self, ui_theme: UiTheme) -> Self {
+        self.ui_theme = ui_theme;
+        self
+    }
+
+    pub fn set_ui_theme(&mut self, ui_theme: UiTheme) {
+        self.ui_theme = ui_theme;
     }
 
     /// Push new content to the buffer
@@ -137,9 +149,7 @@ impl MarkdownStreamCollector {
     fn render_lines(&self, content: &str) -> Vec<Line<'static>> {
         let width = self.width.unwrap_or(80);
         let style = if self.is_thinking {
-            Style::default()
-                .fg(palette::STATUS_WARNING)
-                .add_modifier(Modifier::DIM | Modifier::ITALIC)
+            thinking_stream_style(self.ui_theme)
         } else {
             Style::default()
         };
@@ -280,7 +290,7 @@ struct BlockState {
 }
 
 /// State for managing multiple stream collectors (one per content block)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StreamingState {
     /// Per-block state by index (collector + chunker + policy).
     blocks: Vec<Option<BlockState>>,
@@ -290,6 +300,19 @@ pub struct StreamingState {
     pub accumulated_text: String,
     /// Accumulated thinking for display
     pub accumulated_thinking: String,
+    ui_theme: UiTheme,
+}
+
+impl Default for StreamingState {
+    fn default() -> Self {
+        Self {
+            blocks: Vec::new(),
+            is_active: false,
+            accumulated_text: String::new(),
+            accumulated_thinking: String::new(),
+            ui_theme: palette::UI_THEME,
+        }
+    }
 }
 
 impl StreamingState {
@@ -306,7 +329,7 @@ impl StreamingState {
         self.blocks[index] = Some(BlockState {
             line_buffer: LineBuffer::new(),
             bypass_gate: true,
-            collector: MarkdownStreamCollector::new(width, false),
+            collector: MarkdownStreamCollector::new(width, false).with_ui_theme(self.ui_theme),
             chunker: StreamChunker::new(),
             policy: AdaptiveChunkingPolicy::new(),
         });
@@ -322,7 +345,7 @@ impl StreamingState {
         self.blocks[index] = Some(BlockState {
             line_buffer: LineBuffer::new(),
             bypass_gate: true,
-            collector: MarkdownStreamCollector::new(width, true),
+            collector: MarkdownStreamCollector::new(width, true).with_ui_theme(self.ui_theme),
             chunker: StreamChunker::new(),
             policy: AdaptiveChunkingPolicy::new(),
         });
@@ -390,9 +413,12 @@ impl StreamingState {
             .and_then(|b| b.as_ref())
             .is_some_and(|b| b.collector.is_thinking)
         {
-            Style::default()
-                .fg(palette::STATUS_WARNING)
-                .add_modifier(Modifier::DIM | Modifier::ITALIC)
+            thinking_stream_style(
+                self.blocks[index]
+                    .as_ref()
+                    .map(|b| b.collector.ui_theme)
+                    .unwrap_or(self.ui_theme),
+            )
         } else {
             Style::default()
         };
@@ -450,9 +476,12 @@ impl StreamingState {
             .and_then(|b| b.as_ref())
             .is_some_and(|b| b.collector.is_thinking)
         {
-            Style::default()
-                .fg(palette::STATUS_WARNING)
-                .add_modifier(Modifier::DIM | Modifier::ITALIC)
+            thinking_stream_style(
+                self.blocks[index]
+                    .as_ref()
+                    .map(|b| b.collector.ui_theme)
+                    .unwrap_or(self.ui_theme),
+            )
         } else {
             Style::default()
         };
@@ -530,6 +559,13 @@ impl StreamingState {
         }
     }
 
+    pub fn set_ui_theme(&mut self, ui_theme: UiTheme) {
+        self.ui_theme = ui_theme;
+        for block in self.blocks.iter_mut().flatten() {
+            block.collector.set_ui_theme(ui_theme);
+        }
+    }
+
     /// Check if any stream is still active
     fn check_active(&mut self) {
         self.is_active = self.blocks.iter().any(|b| {
@@ -552,6 +588,12 @@ impl StreamingState {
         self.accumulated_text.clear();
         self.accumulated_thinking.clear();
     }
+}
+
+fn thinking_stream_style(ui_theme: UiTheme) -> Style {
+    Style::default()
+        .fg(ui_theme.status_warning)
+        .add_modifier(Modifier::DIM | Modifier::ITALIC)
 }
 
 #[cfg(test)]
@@ -627,6 +669,20 @@ mod tests {
 
         assert_eq!(state.commit_text(0), "thinking deeply");
         assert!(!state.has_pending_chunker_lines(0));
+    }
+
+    #[test]
+    fn thinking_lines_use_injected_theme_warning_color() {
+        let mut theme = palette::DEEPSEEK_SHELL_UI_THEME;
+        theme.status_warning = ratatui::style::Color::Indexed(220);
+        let mut state = StreamingState::new();
+        state.set_ui_theme(theme);
+        state.start_thinking(0, None);
+        state.push_content(0, "thinking deeply");
+
+        let lines = state.commit_lines(0);
+
+        assert_eq!(lines[0].spans[0].style.fg, Some(theme.status_warning));
     }
 
     #[test]

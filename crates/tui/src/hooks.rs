@@ -1187,11 +1187,19 @@ fn first_non_empty_line(text: &str) -> Option<String> {
 }
 
 fn truncate_hook_message(message: &str) -> String {
+    truncate_hook_message_with_ascii(message, crate::palette::ascii_ui_enabled())
+}
+
+fn truncate_hook_message_with_ascii(message: &str, ascii: bool) -> String {
     const MAX_CHARS: usize = 240;
     let mut chars = message.chars();
     let mut out: String = chars.by_ref().take(MAX_CHARS).collect();
     if chars.next().is_some() {
-        out.push('…');
+        if ascii {
+            out.push_str("...");
+        } else {
+            out.push('…');
+        }
     }
     out
 }
@@ -1276,6 +1284,16 @@ NOEQUAL line dropped
     fn parse_env_lines_empty_when_no_assignments() {
         let parsed = super::parse_env_lines("# nothing\n\n  \n");
         assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn truncate_hook_message_uses_ascii_ellipsis_when_enabled() {
+        let long = "x".repeat(241);
+
+        assert_eq!(
+            super::truncate_hook_message_with_ascii(&long, true),
+            format!("{}...", "x".repeat(240))
+        );
     }
 
     #[test]

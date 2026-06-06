@@ -637,12 +637,47 @@ You can inspect or update these from the TUI with `/settings` and `/config`
 
 Common settings keys:
 
-- `theme` (`system`, `dark`, `light`, `grayscale`, `catppuccin-mocha`,
-  `tokyo-night`, `dracula`, `gruvbox-dark`; default `system`): `system`
-  follows terminal background detection, `dark`/`light` use the DeepSeek
+- `theme` (`system`, `terminal`, `deepseek-shell`, `dark`, `light`,
+  `grayscale`, `catppuccin-mocha`, `tokyo-night`, `dracula`, `gruvbox-dark`,
+  `claude`, `matrix`, `solarized-light`; default `system`): `system` follows terminal background detection,
+  `terminal` inherits host terminal colors, `deepseek-shell` applies the
+  terminal-first DeepSeek Shell visual style, `dark`/`light` use the DeepSeek
   palettes, `grayscale` is the low-opinion black/white theme, and the named
-  community presets apply across the TUI. Aliases such as `whale`, `mono`,
-  `black-white`, `tokyonight`, and `gruvbox` are accepted.
+  community presets apply across the TUI. Aliases such as `whale`, `deepseek`,
+  `ds-shell`, `mono`, `black-white`, `tokyonight`, and `gruvbox` are accepted.
+  Use `/theme deepseek-shell` to preview and save the new shell theme; use
+  `/theme system` to return to the default behavior. See
+  [CLI_VISUAL_SPEC.md](CLI_VISUAL_SPEC.md) for the theme's visual tokens and
+  fallback rules.
+- `CODEWHALE_ASCII_UI=1`: environment fallback for terminals or fonts that
+  cannot render Unicode UI symbols reliably. This keeps the DeepSeek Shell
+  composer prompt and submit hints, empty-state brand line, header status
+  indicator, transcript
+  role/rail markers, thinking rail/cursor/placeholders, cycle-boundary rules/arrows,
+  footer live strip, retry labels,
+  shell chip, footer balance currency, picker hints,
+  `/settings` display separators,
+  `/tokens`, `/cost`, and `/model` localized report/status rules,
+  transcript system/error messages,
+  context seam status markers,
+  edit-file fuzzy-match summary separators,
+  restore snapshot-label ellipses,
+  localized width-truncation ellipsis,
+  API-key help bullets,
+  PR review prompt separators/arrows/ellipsis,
+  command-palette description separators,
+  large-paste toast separators,
+  setup/status/doctor/init/session-fork CLI markers/arrows,
+  client stream error separators,
+  command-palette/theme-picker/file-picker/model-picker/provider-picker/session-picker/mode-picker/status-picker/feedback-picker/plan-prompt/user-input/context-menu/pager/help-overlay borders,
+  pending-input preview, help overlay, live-transcript chrome/cache render context,
+  config/shell-control/sub-agents modal chrome/steps marker, Markdown
+  table chrome, onboarding panel, status/change summaries, sidebar separators/status markers/
+  missing-value placeholders/handle/scrollbars, tool cards, agent cards, fanout count separators,
+  terminal title animation/completion titles, decision-card chrome/glyphs,
+  command text bullets, approval title separators, and modal warning/status symbols
+  in plain ASCII. The implementation-facing checklist in
+  [CLI_VISUAL_SPEC.md](CLI_VISUAL_SPEC.md) records the full fallback surface.
 - `auto_compact` (on/off, default off)
 - `auto_compact_threshold_percent` (10-100, default `80`): pre-send
   auto-compaction threshold used only when `auto_compact` is enabled.
@@ -661,6 +696,18 @@ Common settings keys:
   currently typed directory segment in deterministic alphabetical order.
 - `show_thinking` (on/off)
 - `show_tool_details` (on/off)
+- `low_motion` (on/off, default off): reduces streaming/chrome motion. The
+  `NO_ANIMATIONS` environment override and flicker-prone terminal detection can
+  force this on at startup.
+- `fancy_animations` (on/off, default on): controls passive footer animation.
+  `NO_ANIMATIONS` and detected flicker-prone terminal environments force this
+  off.
+- `status_indicator` (`whale`, `dots`, `off`; default `whale`): controls the
+  header status indicator next to the effort chip. Use `off` to remove the
+  animated indicator; ASCII fallback renders dot frames instead of Unicode.
+- `synchronized_output` (`auto`, `on`, `off`; default `auto`): controls DEC
+  2026 synchronized terminal output. Set `off` if your terminal flickers or
+  does not handle synchronized output cleanly.
 - `locale` (`auto`, `en`, `ja`, `zh-Hans`, `pt-BR`; default `auto`): UI chrome
   locale. `auto` checks `LC_ALL`, `LC_MESSAGES`, then `LANG`; unsupported or
   missing locales fall back to English. The runtime also exposes the resolved
@@ -684,6 +731,26 @@ Common settings keys:
 - `max_history` (number of submitted input history entries; cleared drafts are
   also kept locally for composer history search)
 - `default_model` (model name override)
+
+### DeepSeek Shell display troubleshooting
+
+Use these checks when `/theme deepseek-shell` looks wrong in a terminal:
+
+- Run `/theme system` to confirm the issue is specific to the opt-in shell
+  theme rather than the base TUI layout.
+- Start with `CODEWHALE_ASCII_UI=1` if box drawing, prompt chevrons, rails,
+  status glyphs, or picker borders render as missing boxes or mojibake.
+- Start with `NO_ANIMATIONS=1`, or set `low_motion = true`,
+  `fancy_animations = false`, `status_indicator = "off"`, and
+  `synchronized_output = "off"` if the header, footer, terminal title, or
+  streaming output flickers.
+- Test at 80 columns after changing fonts or terminal profiles. Header,
+  footer, composer text, tool-card headers, picker rows, and sidebar summaries
+  should remain readable without overlapping adjacent chrome.
+- If colors collapse in a 16-color terminal, keep `theme = "system"` or
+  `theme = "terminal"` for that profile; `deepseek-shell` is optimized for
+  ANSI 256-color terminals and falls back conservatively when richer color is
+  unavailable.
 
 Only `agent`, `plan`, and `yolo` are visible modes in the UI. Switch between
 them with `/mode`. For compatibility, older settings files with

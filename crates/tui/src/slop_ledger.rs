@@ -442,7 +442,12 @@ impl SlopLedger {
 
             // Detailed entries
             for e in bucket_entries {
-                out.push_str(&format!("### {} — {}\n\n", short_id(&e.id), e.title));
+                out.push_str(&format!(
+                    "### {}{}{}\n\n",
+                    short_id(&e.id),
+                    heading_separator(),
+                    e.title
+                ));
                 out.push_str(&format!("- **Severity**: {:?}\n", e.severity));
                 out.push_str(&format!("- **Confidence**: {:?}\n", e.confidence));
                 out.push_str(&format!("- **Status**: {:?}\n", e.status));
@@ -903,15 +908,32 @@ impl ToolSpec for SlopLedgerExportTool {
     }
 }
 
-/// Truncate a UTF-8 string to at most `max_chars` characters, appending '…'
-/// when truncation occurs. Operates on char boundaries — never panics on
-/// multi-byte characters.
+fn heading_separator() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        " - "
+    } else {
+        " — "
+    }
+}
+
+/// Truncate a UTF-8 string to at most `max_chars` characters, appending an
+/// ellipsis when truncation occurs. Operates on char boundaries — never panics
+/// on multi-byte characters.
 fn truncate_str(s: &str, max_chars: usize) -> String {
+    truncate_str_with_ascii(s, max_chars, crate::palette::ascii_ui_enabled())
+}
+
+fn truncate_str_with_ascii(s: &str, max_chars: usize, ascii: bool) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-    format!("{truncated}…")
+    let ellipsis = if ascii { "..." } else { "…" };
+    if max_chars <= ellipsis.chars().count() {
+        return ellipsis.chars().take(max_chars).collect();
+    }
+    let keep = max_chars.saturating_sub(ellipsis.chars().count());
+    let truncated: String = s.chars().take(keep).collect();
+    format!("{truncated}{ellipsis}")
 }
 
 /// Return a display-safe short id without assuming byte offsets are char
@@ -1007,7 +1029,9 @@ impl SlopLedger {
             return None;
         }
         let mut out = format!(
-            "## ⚠️ SlopLedger gate — {} open slop entries\n\n",
+            "## {}{}{} open slop entries\n\n",
+            gate_label(),
+            heading_separator(),
             open.len()
         );
         out.push_str("Review these before claiming completion:\n\n");
@@ -1022,6 +1046,18 @@ impl SlopLedger {
             ));
         }
         Some(out)
+    }
+}
+
+fn gate_label() -> &'static str {
+    gate_label_with_ascii(crate::palette::ascii_ui_enabled())
+}
+
+fn gate_label_with_ascii(ascii: bool) -> &'static str {
+    if ascii {
+        "WARNING: SlopLedger gate"
+    } else {
+        "⚠️ SlopLedger gate"
     }
 }
 
@@ -1077,6 +1113,19 @@ mod tests {
         assert_eq!(short_id("abc"), "abc");
         assert_eq!(short_id("abcdefghi"), "abcdefgh");
         assert_eq!(short_id("残渣-ledger-entry"), "残渣-ledge");
+    }
+
+    #[test]
+    fn truncate_str_uses_ascii_ellipsis_without_exceeding_width() {
+        assert_eq!(truncate_str_with_ascii("abcdef", 5, true), "ab...");
+        assert_eq!(truncate_str_with_ascii("abcdef", 2, true), "..");
+        assert_eq!(truncate_str_with_ascii("abcdef", 5, false), "abcd…");
+    }
+
+    #[test]
+    fn gate_label_uses_plain_ascii_warning_when_enabled() {
+        assert_eq!(gate_label_with_ascii(true), "WARNING: SlopLedger gate");
+        assert_eq!(gate_label_with_ascii(false), "⚠️ SlopLedger gate");
     }
 
     #[test]

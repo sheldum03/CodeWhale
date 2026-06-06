@@ -103,11 +103,14 @@ pub(super) fn open_shell_job_pager(app: &mut App, detail: &ShellJobDetail) {
         .map(|area| area.width)
         .unwrap_or(100)
         .saturating_sub(4);
-    app.view_stack.push(PagerView::from_text(
-        format!("Shell Job {}", detail.snapshot.id),
-        &format_shell_job_detail(detail),
-        width.max(60),
-    ));
+    app.view_stack.push(
+        PagerView::from_text(
+            format!("Shell Job {}", detail.snapshot.id),
+            &format_shell_job_detail(detail),
+            width.max(60),
+        )
+        .with_ui_theme(app.ui_theme),
+    );
 }
 
 fn format_shell_job_detail(detail: &ShellJobDetail) -> String {

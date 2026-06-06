@@ -4,34 +4,34 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::localization::MessageId;
-use crate::palette;
 use crate::tui::app::App;
 
 pub fn lines(app: &App) -> Vec<Line<'static>> {
+    let ui_theme = app.ui_theme;
     let mut lines = vec![
         Line::from(Span::styled(
             app.tr(MessageId::OnboardApiKeyTitle).to_string(),
             Style::default()
-                .fg(palette::DEEPSEEK_SKY)
+                .fg(ui_theme.accent_primary)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(Span::styled(
             app.tr(MessageId::OnboardApiKeyStep1).to_string(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(ui_theme.text_body),
         )),
         Line::from(Span::styled(
             app.tr(MessageId::OnboardApiKeyStep2).to_string(),
-            Style::default().fg(palette::TEXT_PRIMARY),
+            Style::default().fg(ui_theme.text_body),
         )),
         Line::from(""),
         Line::from(Span::styled(
             app.tr(MessageId::OnboardApiKeySavedHint).to_string(),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )),
         Line::from(Span::styled(
             app.tr(MessageId::OnboardApiKeyFormatHint).to_string(),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         )),
         Line::from(""),
     ];
@@ -46,12 +46,12 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     lines.push(Line::from(vec![
         Span::styled(
             app.tr(MessageId::OnboardApiKeyLabel).to_string(),
-            Style::default().fg(palette::TEXT_MUTED),
+            Style::default().fg(ui_theme.text_muted),
         ),
         Span::styled(
             display,
             Style::default()
-                .fg(palette::TEXT_PRIMARY)
+                .fg(ui_theme.text_body)
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
@@ -60,7 +60,7 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     if let Some(message) = app.status_message.as_deref() {
         lines.push(Line::from(Span::styled(
             message.to_string(),
-            Style::default().fg(palette::STATUS_WARNING),
+            Style::default().fg(ui_theme.warning),
         )));
         lines.push(Line::from(""));
     }
@@ -68,7 +68,7 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         app.tr(MessageId::OnboardApiKeyFooter).to_string(),
-        Style::default().fg(palette::TEXT_MUTED),
+        Style::default().fg(ui_theme.text_muted),
     )));
 
     lines

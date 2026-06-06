@@ -20,7 +20,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::CommandResult;
+use super::{CommandResult, command_text_separator};
 use crate::tui::app::App;
 
 const MEMORY_USAGE: &str = "/memory [show|path|clear|edit|help]";
@@ -56,15 +56,9 @@ pub fn memory(app: &mut App, arg: Option<&str>) -> CommandResult {
     match sub {
         "" | "show" => {
             let body = match fs::read_to_string(&path) {
-                Ok(text) if text.trim().is_empty() => format!(
-                    "{}\n(empty — add via `# foo` from the composer or have the model use the `remember` tool)",
-                    path.display()
-                ),
+                Ok(text) if text.trim().is_empty() => memory_empty_body(&path),
                 Ok(text) => format!("{}\n\n{}", path.display(), text.trim_end()),
-                Err(_) => format!(
-                    "{}\n(file does not exist yet — add via `# foo` from the composer to create it)",
-                    path.display()
-                ),
+                Err(_) => memory_missing_body(&path),
             };
             CommandResult::message(body)
         }
@@ -85,10 +79,27 @@ pub fn memory(app: &mut App, arg: Option<&str>) -> CommandResult {
     }
 }
 
+fn memory_empty_body(path: &Path) -> String {
+    format!(
+        "{}\n(empty{}add via `# foo` from the composer or have the model use the `remember` tool)",
+        path.display(),
+        command_text_separator()
+    )
+}
+
+fn memory_missing_body(path: &Path) -> String {
+    format!(
+        "{}\n(file does not exist yet{}add via `# foo` from the composer to create it)",
+        path.display(),
+        command_text_separator()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::test_support::EnvVarGuard;
     use crate::tui::app::{App, TuiOptions};
     use tempfile::TempDir;
 
@@ -148,5 +159,21 @@ mod tests {
         let msg = result.message.expect("disabled memory should return text");
         assert!(msg.contains("user memory is disabled"));
         assert!(msg.contains("DEEPSEEK_MEMORY=on"));
+    }
+
+    #[test]
+    fn memory_empty_messages_use_ascii_separator_when_enabled() {
+        let _lock = crate::test_support::lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let tmpdir = TempDir::new().expect("tempdir");
+        let path = tmpdir.path().join("memory.md");
+
+        let empty = memory_empty_body(&path);
+        let missing = memory_missing_body(&path);
+
+        assert!(empty.contains("(empty - add via"));
+        assert!(missing.contains("(file does not exist yet - add via"));
+        assert!(!empty.contains('\u{2014}'));
+        assert!(!missing.contains('\u{2014}'));
     }
 }

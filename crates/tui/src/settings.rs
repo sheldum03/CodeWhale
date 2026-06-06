@@ -33,7 +33,7 @@ const TUI_PREFS_FILE_NAME: &str = "tui.toml";
 /// # Example `~/.codewhale/tui.toml`
 ///
 /// ```toml
-/// theme    = "dark"        # "system" | "dark" | "light" | "grayscale" | "catppuccin-mocha" | ...
+/// theme    = "dark"        # "system" | "terminal" | "deepseek-shell" | "dark" | "light" | ...
 /// font_size = 14
 ///
 /// [keybinds]
@@ -162,7 +162,7 @@ impl TuiPrefs {
         let theme = self.theme.trim().to_ascii_lowercase();
         let Some(theme) = normalize_theme_name(&theme) else {
             anyhow::bail!(
-                "Invalid tui.toml theme '{}': expected system, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, or solarized-light.",
+                "Invalid tui.toml theme '{}': expected system, terminal, deepseek-shell, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, claude, matrix, or solarized-light.",
                 self.theme
             );
         };
@@ -240,10 +240,11 @@ pub struct Settings {
     /// UI locale: auto, en, ja, zh-Hans, pt-BR, es-419
     pub locale: String,
     /// Named UI theme. Accepts `"system"` (follow terminal background),
-    /// `"dark"`, `"light"`, `"grayscale"`, or one of the community
-    /// presets: `"catppuccin-mocha"`, `"tokyo-night"`, `"dracula"`,
-    /// `"gruvbox-dark"`. The `background_color` setting still overrides the
-    /// surface color on top of the resolved theme.
+    /// `"terminal"` (inherit host colors), `"deepseek-shell"`, `"dark"`,
+    /// `"light"`, `"grayscale"`, or one of the community presets:
+    /// `"catppuccin-mocha"`, `"tokyo-night"`, `"dracula"`, `"gruvbox-dark"`,
+    /// `"claude"`, `"matrix"`, `"solarized-light"`. The `background_color`
+    /// setting still overrides the surface color on top of the resolved theme.
     pub theme: String,
     /// Optional main TUI background color as a 6-digit hex RGB value.
     pub background_color: Option<String>,
@@ -602,7 +603,7 @@ impl Settings {
             "theme" => {
                 let Some(id) = crate::palette::ThemeId::from_name(value) else {
                     anyhow::bail!(
-                        "Failed to update setting: invalid theme '{value}'. Expected: system, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, solarized-light."
+                        "Failed to update setting: invalid theme '{value}'. Expected: system, terminal, deepseek-shell, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, claude, matrix, solarized-light."
                     );
                 };
                 self.theme = id.name().to_string();
@@ -610,7 +611,7 @@ impl Settings {
             "ui_theme" => {
                 let Some(id) = crate::palette::ThemeId::from_name(value) else {
                     anyhow::bail!(
-                        "Failed to update setting: invalid theme '{value}'. Expected: system, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, solarized-light."
+                        "Failed to update setting: invalid theme '{value}'. Expected: system, terminal, deepseek-shell, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, claude, matrix, solarized-light."
                     );
                 };
                 self.theme = id.name().to_string();
@@ -766,7 +767,7 @@ impl Settings {
         use crate::localization::{MessageId, tr};
         let mut lines = Vec::new();
         lines.push(tr(locale, MessageId::SettingsTitle).to_string());
-        lines.push("─────────────────────────────".to_string());
+        lines.push(settings_display_separator().to_string());
         lines.push(format!("  auto_compact:       {}", self.auto_compact));
         lines.push(format!(
             "  auto_compact_pct:   {:.0}",
@@ -888,7 +889,7 @@ impl Settings {
             ),
             (
                 "theme",
-                "UI theme: system, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, solarized-light",
+                "UI theme: system, terminal, deepseek-shell, dark, light, grayscale, catppuccin-mocha, tokyo-night, dracula, gruvbox-dark, claude, matrix, solarized-light",
             ),
             (
                 "background_color",
@@ -983,6 +984,14 @@ impl Settings {
     #[must_use]
     pub fn synchronized_output_enabled(&self) -> bool {
         !self.synchronized_output.eq_ignore_ascii_case("off")
+    }
+}
+
+fn settings_display_separator() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "-----------------------------"
+    } else {
+        "─────────────────────────────"
     }
 }
 
@@ -1399,6 +1408,11 @@ mod tests {
             .expect("set solarized alias");
         assert_eq!(settings.theme, "solarized-light");
 
+        settings
+            .set("theme", "ds-shell")
+            .expect("set deepseek shell alias");
+        assert_eq!(settings.theme, "deepseek-shell");
+
         let err = settings
             .set("theme", "nord")
             .expect_err("unknown theme should fail");
@@ -1504,6 +1518,24 @@ mod tests {
         assert!(
             zh.contains("配置文件"),
             "chinese config label missing:\n{zh}"
+        );
+    }
+
+    #[test]
+    fn display_uses_ascii_separator_when_ascii_ui_enabled() {
+        let _g = config_path_test_guard();
+        let _ascii = EnvVarRestore::set("CODEWHALE_ASCII_UI", "1");
+        let settings = Settings::default();
+
+        let display = settings.display(crate::localization::Locale::En);
+
+        assert!(
+            display.contains("-----------------------------"),
+            "ascii separator missing:\n{display}"
+        );
+        assert!(
+            !display.contains("─────────────────────────────"),
+            "unicode separator should not render in ASCII mode:\n{display}"
         );
     }
 
@@ -2438,11 +2470,15 @@ mod tests {
             "dark",
             "light",
             "system",
+            "terminal",
+            "deepseek-shell",
             "grayscale",
             "catppuccin-mocha",
             "tokyo-night",
             "dracula",
             "gruvbox-dark",
+            "claude",
+            "matrix",
             "solarized-light",
         ] {
             let mut prefs = TuiPrefs {
@@ -2478,7 +2514,7 @@ mod tests {
         assert!(err.to_string().contains("Invalid tui.toml theme"));
         assert!(
             err.to_string()
-                .contains("expected system, dark, light, grayscale")
+                .contains("expected system, terminal, deepseek-shell")
         );
         assert!(err.to_string().contains("solarized-light"));
     }

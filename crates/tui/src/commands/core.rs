@@ -11,7 +11,7 @@ use crate::localization::{MessageId, tr};
 use crate::tui::app::{App, AppAction, AppMode, ReasoningEffort};
 use crate::tui::views::{HelpView, ModalKind, SubAgentsView, subagent_view_agents};
 
-use super::CommandResult;
+use super::{CommandResult, command_rule, command_text_with_ascii_fallback};
 
 /// Show help information
 pub fn help(app: &mut App, topic: Option<&str>) -> CommandResult {
@@ -42,7 +42,9 @@ pub fn help(app: &mut App, topic: Option<&str>) -> CommandResult {
 
     // Show help overlay
     if app.view_stack.top_kind() != Some(ModalKind::Help) {
-        app.view_stack.push(HelpView::new_for_locale(app.ui_locale));
+        app.view_stack.push(
+            HelpView::new_for_locale(app.ui_locale).with_ui_theme(app.ui_theme),
+        );
     }
     CommandResult::ok()
 }
@@ -145,7 +147,7 @@ pub fn model(app: &mut App, model_name: Option<&str>) -> CommandResult {
                 message.push_str(&warning);
             }
             return CommandResult::with_message_and_action(
-                message,
+                command_text_with_ascii_fallback(message),
                 AppAction::UpdateCompaction(app.compaction_config()),
             );
         }
@@ -199,7 +201,7 @@ pub fn model(app: &mut App, model_name: Option<&str>) -> CommandResult {
             message.push_str(&warning);
         }
         CommandResult::with_message_and_action(
-            message,
+            command_text_with_ascii_fallback(message),
             AppAction::UpdateCompaction(app.compaction_config()),
         )
     } else {
@@ -259,7 +261,8 @@ pub fn models(_app: &mut App) -> CommandResult {
 pub fn subagents(app: &mut App) -> CommandResult {
     if app.view_stack.top_kind() != Some(ModalKind::SubAgents) {
         let agents = subagent_view_agents(app, &app.subagent_cache);
-        app.view_stack.push(SubAgentsView::new(agents));
+        app.view_stack
+            .push(SubAgentsView::new(agents).with_ui_theme(app.ui_theme));
     }
     app.status_message = Some(tr(app.ui_locale, MessageId::SubagentsFetching).to_string());
     CommandResult::action(AppAction::ListSubAgents)
@@ -330,13 +333,14 @@ fn expand_workspace_path(path: &str) -> Result<PathBuf, String> {
 /// Show `DeepSeek` dashboard and docs links
 pub fn deepseek_links(app: &mut App) -> CommandResult {
     let locale = app.ui_locale;
+    let rule = command_rule();
     CommandResult::message(format!(
-        "{}\n\
-─────────────────────────────\n\
+        "{}\n{}\n\
 {} https://platform.deepseek.com\n\
 {}      https://platform.deepseek.com/docs\n\n\
 {}",
         tr(locale, MessageId::LinksTitle),
+        rule,
         tr(locale, MessageId::LinksDashboard),
         tr(locale, MessageId::LinksDocs),
         tr(locale, MessageId::LinksTip),
@@ -475,6 +479,7 @@ mod tests {
     use crate::models::Message;
     use crate::tui::app::{App, AppMode, TuiOptions, TurnCacheRecord};
     use crate::tui::history::HistoryCell;
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
     use std::ffi::OsString;
     use std::path::PathBuf;
     use std::time::Instant;
@@ -482,25 +487,41 @@ mod tests {
 
     struct SettingsPathGuard {
         _tmp: TempDir,
-        previous: Option<OsString>,
+        previous_config_path: Option<OsString>,
+        previous_ascii_ui: Option<OsString>,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl SettingsPathGuard {
         fn new() -> Self {
+            Self::new_with_ascii(false)
+        }
+
+        fn new_ascii() -> Self {
+            Self::new_with_ascii(true)
+        }
+
+        fn new_with_ascii(ascii_ui: bool) -> Self {
             let lock = crate::test_support::lock_test_env();
             let tmp = TempDir::new().expect("settings tempdir");
             let config_path = tmp.path().join(".deepseek").join("config.toml");
             std::fs::create_dir_all(config_path.parent().expect("config parent"))
                 .expect("config dir");
-            let previous = std::env::var_os("DEEPSEEK_CONFIG_PATH");
+            let previous_config_path = std::env::var_os("DEEPSEEK_CONFIG_PATH");
+            let previous_ascii_ui = std::env::var_os("CODEWHALE_ASCII_UI");
             // Safety: test-only environment mutation guarded by a global mutex.
             unsafe {
                 std::env::set_var("DEEPSEEK_CONFIG_PATH", &config_path);
+                if ascii_ui {
+                    std::env::set_var("CODEWHALE_ASCII_UI", "1");
+                } else {
+                    std::env::remove_var("CODEWHALE_ASCII_UI");
+                }
             }
             Self {
                 _tmp: tmp,
-                previous,
+                previous_config_path,
+                previous_ascii_ui,
                 _lock: lock,
             }
         }
@@ -510,10 +531,15 @@ mod tests {
         fn drop(&mut self) {
             // Safety: test-only environment mutation guarded by a global mutex.
             unsafe {
-                if let Some(previous) = self.previous.take() {
+                if let Some(previous) = self.previous_config_path.take() {
                     std::env::set_var("DEEPSEEK_CONFIG_PATH", previous);
                 } else {
                     std::env::remove_var("DEEPSEEK_CONFIG_PATH");
+                }
+                if let Some(previous) = self.previous_ascii_ui.take() {
+                    std::env::set_var("CODEWHALE_ASCII_UI", previous);
+                } else {
+                    std::env::remove_var("CODEWHALE_ASCII_UI");
                 }
             }
         }
@@ -604,11 +630,21 @@ mod tests {
     #[test]
     fn test_help_pushes_overlay() {
         let mut app = create_test_app();
+        let bg = Color::Rgb(1, 2, 3);
+        app.ui_theme = app.ui_theme.with_background_color(bg);
         assert_ne!(app.view_stack.top_kind(), Some(ModalKind::Help));
         let result = help(&mut app, None);
         assert_eq!(result.message, None);
         assert_eq!(result.action, None);
         assert_eq!(app.view_stack.top_kind(), Some(ModalKind::Help));
+
+        let area = Rect::new(0, 0, 100, 32);
+        let mut buf = Buffer::empty(area);
+        app.view_stack.render(area, &mut buf);
+        assert!(
+            buf.content().iter().any(|cell| cell.bg == bg),
+            "help overlay should render with the app ui_theme background"
+        );
     }
 
     #[test]
@@ -794,6 +830,18 @@ mod tests {
         assert_eq!(app.model, "deepseek-v4-flash");
         assert_eq!(app.session.last_prompt_tokens, None);
         assert_eq!(app.session.last_completion_tokens, None);
+    }
+
+    #[test]
+    fn model_change_message_uses_ascii_arrow_when_enabled() {
+        let _settings = SettingsPathGuard::new_ascii();
+        let mut app = create_test_app();
+
+        let result = model(&mut app, Some("deepseek-v4-flash"));
+        let msg = result.message.expect("model command returns message");
+
+        assert!(msg.contains("deepseek-v4-pro -> deepseek-v4-flash"), "got: {msg}");
+        assert!(!msg.contains('\u{2192}'), "got: {msg}");
     }
 
     #[test]

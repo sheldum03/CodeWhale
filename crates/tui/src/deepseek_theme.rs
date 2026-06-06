@@ -1,29 +1,34 @@
 //! Whale/DeepSeek terminal theme tokens.
 //!
-//! A small, deliberately flat module that names the color, border, and
-//! padding choices the TUI is already making. All values match the dark
-//! palette previously hard-coded against [`crate::palette`]; a single
-//! source-of-truth change here can swap the skin later. Visible output
-//! is not changed by introducing this module.
-//!
-//! The only consumers today are the plan and tool cell renderers in
-//! [`crate::tui::history`] and the sidebar section chrome in
-//! [`crate::tui::ui`]. All other call sites continue to use [`crate::palette`]
-//! directly until they are migrated in a later slice.
+//! This module is the compact bridge between the broad [`crate::palette::UiTheme`]
+//! model and render paths that need named semantic tokens for transcript,
+//! sidebar, plan, diff, and tool chrome. Keep visual decisions here when a
+//! surface needs role-level colors or styles instead of raw palette constants;
+//! that keeps the opt-in `deepseek-shell` theme, community themes, and runtime
+//! background overrides moving through the same render contract.
+
+use std::cell::Cell;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{BorderType, Borders, Padding};
 
 use crate::palette;
 use crate::palette::PaletteMode;
+use crate::palette::ThemeId;
+use crate::palette::UiTheme;
 use crate::tui::history::ToolStatus;
 
 /// Visual variant exposed by the theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     Dark,
+    DeepSeekShell,
     Light,
     Grayscale,
+}
+
+thread_local! {
+    static ACTIVE_THEME_OVERRIDE: Cell<Option<Theme>> = Cell::new(None);
 }
 
 /// Centralized visual tokens for sidebar, plan, and tool rendering.
@@ -38,6 +43,27 @@ pub struct Theme {
     pub section_bg: Color,
     pub section_title_color: Color,
     pub section_padding: Padding,
+
+    // Transcript/message color tokens
+    pub text_body_color: Color,
+    pub text_muted_color: Color,
+    pub text_dim_color: Color,
+    pub text_soft_color: Color,
+    pub user_accent_color: Color,
+    pub user_message_bg: Color,
+    pub assistant_accent_color: Color,
+    pub reasoning_text_color: Color,
+    pub reasoning_live_color: Color,
+    pub status_success_color: Color,
+    pub status_warning_color: Color,
+    pub status_error_color: Color,
+    pub status_info_color: Color,
+
+    // Diff preview color tokens
+    pub diff_added_fg: Color,
+    pub diff_deleted_fg: Color,
+    pub diff_added_bg: Color,
+    pub diff_deleted_bg: Color,
 
     // Tool cell color tokens
     pub tool_title_color: Color,
@@ -57,6 +83,12 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Background used to stretch user-message rows across the transcript.
+    #[must_use]
+    pub const fn user_message_bg_color(self) -> Color {
+        self.user_message_bg
+    }
+
     /// The current dark theme. Visible output today uses these values.
     #[must_use]
     pub const fn dark() -> Self {
@@ -73,6 +105,23 @@ impl Theme {
             // for content (#63 follow-up: panels rendered as empty boxes even
             // when "No todos" / "No active plan" should have shown).
             section_padding: Padding::horizontal(1),
+            text_body_color: palette::TEXT_PRIMARY,
+            text_muted_color: palette::TEXT_MUTED,
+            text_dim_color: palette::TEXT_DIM,
+            text_soft_color: palette::TEXT_SOFT,
+            user_accent_color: palette::USER_BODY,
+            user_message_bg: palette::USER_MESSAGE_BG,
+            assistant_accent_color: palette::DEEPSEEK_SKY,
+            reasoning_text_color: palette::TEXT_REASONING,
+            reasoning_live_color: palette::ACCENT_REASONING_LIVE,
+            status_success_color: palette::STATUS_SUCCESS,
+            status_warning_color: palette::STATUS_WARNING,
+            status_error_color: palette::STATUS_ERROR,
+            status_info_color: palette::STATUS_INFO,
+            diff_added_fg: palette::UI_THEME.diff_added_fg,
+            diff_deleted_fg: palette::UI_THEME.diff_deleted_fg,
+            diff_added_bg: palette::UI_THEME.diff_added_bg,
+            diff_deleted_bg: palette::UI_THEME.diff_deleted_bg,
             tool_title_color: palette::TEXT_SOFT,
             tool_value_color: palette::TEXT_MUTED,
             tool_label_color: palette::TEXT_DIM,
@@ -88,6 +137,49 @@ impl Theme {
         }
     }
 
+    /// DeepSeek Shell tokens for terminal-first visual redesign work.
+    #[must_use]
+    pub const fn deepseek_shell() -> Self {
+        Self {
+            variant: Variant::DeepSeekShell,
+            section_borders: Borders::ALL,
+            section_border_type: BorderType::Plain,
+            section_border_color: palette::DEEPSEEK_SHELL_UI_THEME.border,
+            section_bg: palette::DEEPSEEK_SHELL_UI_THEME.surface_bg,
+            section_title_color: palette::DEEPSEEK_SHELL_UI_THEME.accent_primary,
+            section_padding: Padding::horizontal(1),
+            text_body_color: palette::DEEPSEEK_SHELL_UI_THEME.text_body,
+            text_muted_color: palette::DEEPSEEK_SHELL_UI_THEME.text_muted,
+            text_dim_color: palette::DEEPSEEK_SHELL_UI_THEME.text_dim,
+            text_soft_color: palette::DEEPSEEK_SHELL_UI_THEME.text_soft,
+            user_accent_color: palette::DEEPSEEK_SHELL_UI_THEME.accent_primary,
+            user_message_bg: palette::DEEPSEEK_SHELL_UI_THEME.elevated_bg,
+            assistant_accent_color: palette::DEEPSEEK_SHELL_UI_THEME.status_working,
+            reasoning_text_color: palette::DEEPSEEK_SHELL_UI_THEME.accent_secondary,
+            reasoning_live_color: palette::DEEPSEEK_SHELL_UI_THEME.accent_secondary,
+            status_success_color: palette::DEEPSEEK_SHELL_UI_THEME.success,
+            status_warning_color: palette::DEEPSEEK_SHELL_UI_THEME.status_warning,
+            status_error_color: palette::DEEPSEEK_SHELL_UI_THEME.error_fg,
+            status_info_color: palette::DEEPSEEK_SHELL_UI_THEME.info,
+            diff_added_fg: palette::DEEPSEEK_SHELL_UI_THEME.diff_added_fg,
+            diff_deleted_fg: palette::DEEPSEEK_SHELL_UI_THEME.diff_deleted_fg,
+            diff_added_bg: palette::DEEPSEEK_SHELL_UI_THEME.diff_added_bg,
+            diff_deleted_bg: palette::DEEPSEEK_SHELL_UI_THEME.diff_deleted_bg,
+            tool_title_color: palette::DEEPSEEK_SHELL_UI_THEME.text_soft,
+            tool_value_color: palette::DEEPSEEK_SHELL_UI_THEME.text_muted,
+            tool_label_color: palette::DEEPSEEK_SHELL_UI_THEME.text_hint,
+            tool_running_accent: palette::DEEPSEEK_SHELL_UI_THEME.tool_running,
+            tool_success_accent: palette::DEEPSEEK_SHELL_UI_THEME.tool_success,
+            tool_failed_accent: palette::DEEPSEEK_SHELL_UI_THEME.tool_failed,
+            plan_progress_color: palette::DEEPSEEK_SHELL_UI_THEME.status_working,
+            plan_summary_color: palette::DEEPSEEK_SHELL_UI_THEME.text_muted,
+            plan_explanation_color: palette::DEEPSEEK_SHELL_UI_THEME.text_hint,
+            plan_pending_color: palette::DEEPSEEK_SHELL_UI_THEME.text_muted,
+            plan_in_progress_color: palette::DEEPSEEK_SHELL_UI_THEME.warning,
+            plan_completed_color: palette::DEEPSEEK_SHELL_UI_THEME.success,
+        }
+    }
+
     /// Light theme tokens for sidebar and tool chrome.
     #[must_use]
     pub const fn light() -> Self {
@@ -99,6 +191,23 @@ impl Theme {
             section_bg: palette::LIGHT_PANEL,
             section_title_color: palette::DEEPSEEK_BLUE,
             section_padding: Padding::horizontal(1),
+            text_body_color: palette::LIGHT_TEXT_BODY,
+            text_muted_color: palette::LIGHT_TEXT_MUTED,
+            text_dim_color: palette::LIGHT_TEXT_HINT,
+            text_soft_color: palette::LIGHT_TEXT_SOFT,
+            user_accent_color: palette::DEEPSEEK_BLUE,
+            user_message_bg: palette::LIGHT_UI_THEME.elevated_bg,
+            assistant_accent_color: palette::DEEPSEEK_BLUE,
+            reasoning_text_color: Color::Rgb(180, 83, 9),
+            reasoning_live_color: Color::Rgb(180, 83, 9),
+            status_success_color: palette::DEEPSEEK_BLUE,
+            status_warning_color: Color::Rgb(180, 83, 9),
+            status_error_color: palette::DEEPSEEK_RED,
+            status_info_color: palette::DEEPSEEK_BLUE,
+            diff_added_fg: palette::LIGHT_UI_THEME.diff_added_fg,
+            diff_deleted_fg: palette::LIGHT_UI_THEME.diff_deleted_fg,
+            diff_added_bg: palette::LIGHT_UI_THEME.diff_added_bg,
+            diff_deleted_bg: palette::LIGHT_UI_THEME.diff_deleted_bg,
             tool_title_color: palette::LIGHT_TEXT_SOFT,
             tool_value_color: palette::LIGHT_TEXT_MUTED,
             tool_label_color: palette::LIGHT_TEXT_HINT,
@@ -125,6 +234,23 @@ impl Theme {
             section_bg: palette::SOLARIZED_PANEL,
             section_title_color: palette::SOLARIZED_BLUE,
             section_padding: Padding::horizontal(1),
+            text_body_color: palette::SOLARIZED_TEXT_BODY,
+            text_muted_color: palette::SOLARIZED_TEXT_MUTED,
+            text_dim_color: palette::SOLARIZED_TEXT_DIM,
+            text_soft_color: palette::SOLARIZED_TEXT_SOFT,
+            user_accent_color: palette::SOLARIZED_BLUE,
+            user_message_bg: palette::SOLARIZED_LIGHT_UI_THEME.elevated_bg,
+            assistant_accent_color: palette::SOLARIZED_BLUE,
+            reasoning_text_color: palette::SOLARIZED_ORANGE,
+            reasoning_live_color: palette::SOLARIZED_ORANGE,
+            status_success_color: palette::SOLARIZED_CYAN,
+            status_warning_color: palette::SOLARIZED_ORANGE,
+            status_error_color: palette::SOLARIZED_RED,
+            status_info_color: palette::SOLARIZED_BLUE,
+            diff_added_fg: palette::SOLARIZED_LIGHT_UI_THEME.diff_added_fg,
+            diff_deleted_fg: palette::SOLARIZED_LIGHT_UI_THEME.diff_deleted_fg,
+            diff_added_bg: palette::SOLARIZED_LIGHT_UI_THEME.diff_added_bg,
+            diff_deleted_bg: palette::SOLARIZED_LIGHT_UI_THEME.diff_deleted_bg,
             tool_title_color: palette::SOLARIZED_TEXT_SOFT,
             tool_value_color: palette::SOLARIZED_TEXT_MUTED,
             tool_label_color: palette::SOLARIZED_TEXT_DIM,
@@ -151,6 +277,23 @@ impl Theme {
             section_bg: palette::GRAYSCALE_PANEL,
             section_title_color: palette::GRAYSCALE_TEXT_SOFT,
             section_padding: Padding::horizontal(1),
+            text_body_color: palette::GRAYSCALE_TEXT_BODY,
+            text_muted_color: palette::GRAYSCALE_TEXT_MUTED,
+            text_dim_color: palette::GRAYSCALE_TEXT_HINT,
+            text_soft_color: palette::GRAYSCALE_TEXT_SOFT,
+            user_accent_color: palette::GRAYSCALE_TEXT_BODY,
+            user_message_bg: palette::GRAYSCALE_UI_THEME.elevated_bg,
+            assistant_accent_color: palette::GRAYSCALE_TEXT_SOFT,
+            reasoning_text_color: palette::GRAYSCALE_TEXT_MUTED,
+            reasoning_live_color: palette::GRAYSCALE_TEXT_SOFT,
+            status_success_color: palette::GRAYSCALE_TEXT_HINT,
+            status_warning_color: palette::GRAYSCALE_TEXT_BODY,
+            status_error_color: palette::GRAYSCALE_TEXT_BODY,
+            status_info_color: palette::GRAYSCALE_TEXT_MUTED,
+            diff_added_fg: palette::GRAYSCALE_UI_THEME.diff_added_fg,
+            diff_deleted_fg: palette::GRAYSCALE_UI_THEME.diff_deleted_fg,
+            diff_added_bg: palette::GRAYSCALE_UI_THEME.diff_added_bg,
+            diff_deleted_bg: palette::GRAYSCALE_UI_THEME.diff_deleted_bg,
             tool_title_color: palette::GRAYSCALE_TEXT_SOFT,
             tool_value_color: palette::GRAYSCALE_TEXT_MUTED,
             tool_label_color: palette::GRAYSCALE_TEXT_HINT,
@@ -167,12 +310,77 @@ impl Theme {
     }
 
     #[must_use]
+    pub const fn from_ui_theme(theme_id: ThemeId, ui: UiTheme) -> Self {
+        let variant = match theme_id {
+            ThemeId::DeepSeekShell => Variant::DeepSeekShell,
+            _ => match ui.mode {
+                PaletteMode::Dark => Variant::Dark,
+                PaletteMode::Light | PaletteMode::SolarizedLight => Variant::Light,
+                PaletteMode::Grayscale => Variant::Grayscale,
+            },
+        };
+        Self {
+            variant,
+            section_borders: Borders::ALL,
+            section_border_type: BorderType::Plain,
+            section_border_color: ui.border,
+            section_bg: ui.surface_bg,
+            section_title_color: ui.accent_primary,
+            section_padding: Padding::horizontal(1),
+            text_body_color: ui.text_body,
+            text_muted_color: ui.text_muted,
+            text_dim_color: ui.text_dim,
+            text_soft_color: ui.text_soft,
+            user_accent_color: ui.accent_primary,
+            user_message_bg: match theme_id {
+                ThemeId::Whale => palette::USER_MESSAGE_BG,
+                ThemeId::System => match ui.mode {
+                    PaletteMode::Dark => palette::USER_MESSAGE_BG,
+                    _ => ui.elevated_bg,
+                },
+                _ => ui.elevated_bg,
+            },
+            assistant_accent_color: ui.status_working,
+            reasoning_text_color: ui.accent_secondary,
+            reasoning_live_color: ui.accent_secondary,
+            status_success_color: ui.success,
+            status_warning_color: ui.status_warning,
+            status_error_color: ui.error_fg,
+            status_info_color: ui.info,
+            diff_added_fg: ui.diff_added_fg,
+            diff_deleted_fg: ui.diff_deleted_fg,
+            diff_added_bg: ui.diff_added_bg,
+            diff_deleted_bg: ui.diff_deleted_bg,
+            tool_title_color: ui.text_soft,
+            tool_value_color: ui.text_muted,
+            tool_label_color: ui.text_hint,
+            tool_running_accent: ui.tool_running,
+            tool_success_accent: ui.tool_success,
+            tool_failed_accent: ui.tool_failed,
+            plan_progress_color: ui.status_working,
+            plan_summary_color: ui.text_muted,
+            plan_explanation_color: ui.text_hint,
+            plan_pending_color: ui.text_muted,
+            plan_in_progress_color: ui.warning,
+            plan_completed_color: ui.success,
+        }
+    }
+
+    #[must_use]
     pub const fn for_palette_mode(mode: PaletteMode) -> Self {
         match mode {
             PaletteMode::Dark => Self::dark(),
             PaletteMode::Light => Self::light(),
             PaletteMode::Grayscale => Self::grayscale(),
             PaletteMode::SolarizedLight => Self::solarized_light(),
+        }
+    }
+
+    #[must_use]
+    pub const fn for_theme_id(theme_id: ThemeId, mode: PaletteMode) -> Self {
+        match theme_id {
+            ThemeId::DeepSeekShell => Self::deepseek_shell(),
+            _ => Self::for_palette_mode(mode),
         }
     }
 
@@ -213,20 +421,56 @@ impl Theme {
     }
 }
 
-/// Returns the active theme used by the TUI today.
+/// Returns the active theme used by the current render scope.
 #[must_use]
-pub const fn active_theme() -> Theme {
-    Theme::dark()
+pub fn active_theme() -> Theme {
+    ACTIVE_THEME_OVERRIDE
+        .with(|theme| theme.get())
+        .unwrap_or_else(Theme::dark)
+}
+
+pub fn with_active_theme<T>(theme: Theme, f: impl FnOnce() -> T) -> T {
+    ACTIVE_THEME_OVERRIDE.with(|slot| {
+        struct ResetActiveTheme<'a> {
+            slot: &'a Cell<Option<Theme>>,
+            previous: Option<Theme>,
+        }
+
+        impl<'a> Drop for ResetActiveTheme<'a> {
+            fn drop(&mut self) {
+                self.slot.set(self.previous);
+            }
+        }
+
+        let previous = slot.replace(Some(theme));
+        let _reset = ResetActiveTheme { slot, previous };
+        f()
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, Variant, active_theme};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::{Theme, Variant, active_theme, with_active_theme};
     use crate::palette;
     use crate::tui::history::ToolStatus;
 
     #[test]
     fn active_theme_returns_dark() {
+        assert_eq!(active_theme(), Theme::dark());
+    }
+
+    #[test]
+    fn scoped_active_theme_restores_after_panic() {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            with_active_theme(Theme::deepseek_shell(), || {
+                assert_eq!(active_theme(), Theme::deepseek_shell());
+                panic!("force scoped theme unwind");
+            });
+        }));
+
+        assert!(result.is_err());
         assert_eq!(active_theme(), Theme::dark());
     }
 
@@ -243,6 +487,86 @@ mod tests {
         assert_eq!(theme.tool_running_accent, palette::ACCENT_TOOL_LIVE);
         assert_eq!(theme.tool_success_accent, palette::TEXT_DIM);
         assert_eq!(theme.tool_failed_accent, palette::ACCENT_TOOL_ISSUE);
+    }
+
+    #[test]
+    fn deepseek_shell_theme_uses_shell_palette_tokens() {
+        let theme = Theme::deepseek_shell();
+        assert_eq!(theme.variant, Variant::DeepSeekShell);
+        assert_eq!(
+            theme.section_border_color,
+            palette::DEEPSEEK_SHELL_UI_THEME.border
+        );
+        assert_eq!(
+            theme.section_title_color,
+            palette::DEEPSEEK_SHELL_UI_THEME.accent_primary
+        );
+        assert_eq!(
+            theme.tool_running_accent,
+            palette::DEEPSEEK_SHELL_UI_THEME.tool_running
+        );
+        assert_eq!(
+            theme.plan_progress_color,
+            palette::DEEPSEEK_SHELL_UI_THEME.status_working
+        );
+        assert_eq!(
+            theme.diff_added_bg,
+            palette::DEEPSEEK_SHELL_UI_THEME.diff_added_bg
+        );
+        assert_eq!(
+            theme.diff_deleted_bg,
+            palette::DEEPSEEK_SHELL_UI_THEME.diff_deleted_bg
+        );
+        assert_eq!(
+            theme.user_message_bg_color(),
+            palette::DEEPSEEK_SHELL_UI_THEME.elevated_bg
+        );
+    }
+
+    #[test]
+    fn for_theme_id_selects_deepseek_shell_tokens() {
+        assert_eq!(
+            Theme::for_theme_id(
+                crate::palette::ThemeId::DeepSeekShell,
+                crate::palette::PaletteMode::Dark,
+            ),
+            Theme::deepseek_shell()
+        );
+        assert_eq!(
+            Theme::for_theme_id(
+                crate::palette::ThemeId::WhaleLight,
+                crate::palette::PaletteMode::Light,
+            ),
+            Theme::light()
+        );
+    }
+
+    #[test]
+    fn from_ui_theme_preserves_runtime_theme_tokens() {
+        use ratatui::style::Color;
+
+        let mut ui = palette::DEEPSEEK_SHELL_UI_THEME.with_background_color(Color::Indexed(17));
+        ui.accent_primary = Color::Indexed(42);
+        ui.diff_added_bg = Color::Indexed(22);
+        ui.diff_deleted_bg = Color::Indexed(52);
+        ui.elevated_bg = Color::Indexed(18);
+
+        let theme = Theme::from_ui_theme(crate::palette::ThemeId::DeepSeekShell, ui);
+
+        assert_eq!(theme.variant, Variant::DeepSeekShell);
+        assert_eq!(theme.section_bg, Color::Indexed(17));
+        assert_eq!(theme.section_title_color, Color::Indexed(42));
+        assert_eq!(theme.diff_added_bg, Color::Indexed(22));
+        assert_eq!(theme.diff_deleted_bg, Color::Indexed(52));
+        assert_eq!(theme.user_message_bg_color(), Color::Indexed(18));
+    }
+
+    #[test]
+    fn from_ui_theme_keeps_dark_default_user_message_background() {
+        let theme = Theme::from_ui_theme(crate::palette::ThemeId::Whale, palette::UI_THEME);
+
+        assert_eq!(theme.variant, Variant::Dark);
+        assert_eq!(theme.user_message_bg_color(), palette::USER_MESSAGE_BG);
     }
 
     #[test]

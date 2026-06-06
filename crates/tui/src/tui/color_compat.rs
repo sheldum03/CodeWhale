@@ -27,8 +27,8 @@ pub(crate) struct ColorCompatBackend<W: Write> {
     depth: ColorDepth,
     palette_mode: PaletteMode,
     /// Currently active named theme. `System`/`Whale`/`WhaleLight` make the
-    /// theme remap a no-op (those rely on the dark/light pipeline); the
-    /// community presets (Catppuccin, Tokyo Night, Dracula, Gruvbox) trigger
+    /// theme remap a no-op (those rely on the dark/light pipeline); named
+    /// opt-in themes such as DeepSeek Shell and the community presets trigger
     /// a per-cell rewrite of dark-palette constants → preset slots.
     theme_id: ThemeId,
     /// Resolved active `UiTheme`, *including* any user `background_color`
@@ -56,7 +56,7 @@ impl<W: Write> ColorCompatBackend<W> {
             // Default to whatever System resolves to right now — it stays a
             // no-op for the remap since `theme_id` is also System, so this
             // initial value only matters once `set_theme` flips both fields
-            // to a community preset.
+            // to a named opt-in theme.
             active_ui_theme: UiTheme::detect(),
             forced_size: None,
             render_debug: RenderDebugLog::from_env(),
@@ -256,8 +256,8 @@ fn adapt_cell_colors(
     theme_id: ThemeId,
     ui_theme: &UiTheme,
 ) {
-    // Stage 1: community-theme remap (dark palette → preset slots). No-op
-    // for System / Whale / WhaleLight so legacy dark/light flows are
+    // Stage 1: named-theme remap (dark palette → preset slots). No-op for
+    // System / Whale / WhaleLight so legacy dark/light flows are
     // untouched. Runs *before* the palette-mode remap so a light terminal
     // running e.g. Catppuccin still routes the preset colors through the
     // light adaptation below (rare combo, but the sequencing is the same).

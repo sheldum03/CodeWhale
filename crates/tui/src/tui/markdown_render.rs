@@ -31,6 +31,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::deepseek_theme::active_theme;
 use crate::palette;
 use crate::tui::osc8;
 use crate::tui::ui_text::CopyLineSeparator;
@@ -104,6 +105,67 @@ pub struct RenderedMarkdownLine {
     pub is_code: bool,
     pub copy_prefix_width: usize,
     pub copy_separator_after: CopyLineSeparator,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TableChrome {
+    row_left: &'static str,
+    row_mid: &'static str,
+    row_right: &'static str,
+    top_left: &'static str,
+    top_mid: &'static str,
+    top_right: &'static str,
+    mid_left: &'static str,
+    mid_mid: &'static str,
+    mid_right: &'static str,
+    bottom_left: &'static str,
+    bottom_mid: &'static str,
+    bottom_right: &'static str,
+    fill: char,
+}
+
+fn markdown_rule_char() -> char {
+    if palette::ascii_ui_enabled() {
+        '-'
+    } else {
+        '\u{2500}'
+    }
+}
+
+fn table_chrome() -> TableChrome {
+    if palette::ascii_ui_enabled() {
+        TableChrome {
+            row_left: "| ",
+            row_mid: " | ",
+            row_right: " |",
+            top_left: "+-",
+            top_mid: "-+-",
+            top_right: "-+",
+            mid_left: "+-",
+            mid_mid: "-+-",
+            mid_right: "-+",
+            bottom_left: "+-",
+            bottom_mid: "-+-",
+            bottom_right: "-+",
+            fill: '-',
+        }
+    } else {
+        TableChrome {
+            row_left: "\u{2502} ",
+            row_mid: " \u{2502} ",
+            row_right: " \u{2502}",
+            top_left: "\u{250C}\u{2500}",
+            top_mid: "\u{2500}\u{252C}\u{2500}",
+            top_right: "\u{2500}\u{2510}",
+            mid_left: "\u{251C}\u{2500}",
+            mid_mid: "\u{2500}\u{253C}\u{2500}",
+            mid_right: "\u{2500}\u{2524}",
+            bottom_left: "\u{2514}\u{2500}",
+            bottom_mid: "\u{2500}\u{2534}\u{2500}",
+            bottom_right: "\u{2500}\u{2518}",
+            fill: '\u{2500}',
+        }
+    }
 }
 
 /// Parse markdown source into a width-independent block AST.
@@ -240,15 +302,15 @@ pub fn render_parsed_tagged(
         match &parsed.blocks[i] {
             Block::Heading { text, .. } => {
                 let style = Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(active_theme().assistant_accent_color)
                     .add_modifier(Modifier::BOLD);
                 out.extend(render_wrapped_line_tagged(text, width, style, false, false));
             }
             Block::HeadingRule => {
                 out.push(RenderedMarkdownLine {
                     line: Line::from(Span::styled(
-                        "─".repeat(width.min(40)),
-                        Style::default().fg(palette::TEXT_DIM),
+                        markdown_rule_char().to_string().repeat(width.min(40)),
+                        Style::default().fg(active_theme().text_dim_color),
                     )),
                     is_code: false,
                     copy_prefix_width: 0,
@@ -258,8 +320,8 @@ pub fn render_parsed_tagged(
             Block::HorizontalRule => {
                 out.push(RenderedMarkdownLine {
                     line: Line::from(Span::styled(
-                        "─".repeat(width.min(60)),
-                        Style::default().fg(palette::TEXT_DIM),
+                        markdown_rule_char().to_string().repeat(width.min(60)),
+                        Style::default().fg(active_theme().text_dim_color),
                     )),
                     is_code: false,
                     copy_prefix_width: 0,
@@ -267,7 +329,7 @@ pub fn render_parsed_tagged(
                 });
             }
             Block::ListItem { bullet, text } => {
-                let bullet_style = Style::default().fg(palette::DEEPSEEK_SKY);
+                let bullet_style = Style::default().fg(active_theme().assistant_accent_color);
                 out.extend(render_list_line_tagged(
                     bullet,
                     text,
@@ -278,7 +340,7 @@ pub fn render_parsed_tagged(
             }
             Block::Code { line } => {
                 let code_style = Style::default()
-                    .fg(palette::DEEPSEEK_SKY)
+                    .fg(active_theme().assistant_accent_color)
                     .add_modifier(Modifier::ITALIC);
                 out.extend(render_wrapped_line_tagged(
                     line, width, code_style, true, true,
@@ -286,7 +348,7 @@ pub fn render_parsed_tagged(
             }
             Block::Paragraph { text } => {
                 let link_style = Style::default()
-                    .fg(palette::DEEPSEEK_BLUE)
+                    .fg(active_theme().user_accent_color)
                     .add_modifier(Modifier::UNDERLINED);
                 out.extend(render_line_with_links_tagged(
                     text, width, base_style, link_style,
@@ -746,7 +808,7 @@ fn parse_inline_spans(line: &str, base_style: Style, link_style: Style) -> Vec<I
     let italic_style = base_style.add_modifier(Modifier::ITALIC);
     let code_style = base_style
         .add_modifier(Modifier::ITALIC)
-        .bg(palette::SURFACE_ELEVATED);
+        .bg(active_theme().section_bg);
     let strike_style = base_style.add_modifier(Modifier::CROSSED_OUT);
     let mut out = Vec::new();
     let mut rest = line;
@@ -994,7 +1056,8 @@ fn render_table_row(cells: &[String], width: usize, base_style: Style) -> Vec<Li
     }
     let col_width = (width.saturating_sub(3 * cells.len() + 1)) / cells.len();
     let col_width = col_width.max(4);
-    let sep_style = Style::default().fg(palette::TEXT_DIM);
+    let sep_style = Style::default().fg(active_theme().text_dim_color);
+    let chrome = table_chrome();
 
     // Wrap each cell into one or more visual segments. The row's visual
     // height equals the tallest column. Cells that wrap to fewer segments
@@ -1004,7 +1067,7 @@ fn render_table_row(cells: &[String], width: usize, base_style: Style) -> Vec<Li
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(row_height);
     for row in 0..row_height {
-        let mut spans: Vec<Span> = vec![Span::styled("│ ".to_string(), sep_style)];
+        let mut spans: Vec<Span> = vec![Span::styled(chrome.row_left.to_string(), sep_style)];
         for (i, cell_segments) in wrapped.iter().enumerate() {
             let segment = cell_segments.get(row).map(String::as_str).unwrap_or("");
             let cell_spans = parse_inline_spans(segment, base_style, link_style());
@@ -1015,9 +1078,9 @@ fn render_table_row(cells: &[String], width: usize, base_style: Style) -> Vec<Li
             }
             spans.push(Span::raw(" ".repeat(pad)));
             if i + 1 < cells.len() {
-                spans.push(Span::styled(" │ ".to_string(), sep_style));
+                spans.push(Span::styled(chrome.row_mid.to_string(), sep_style));
             } else {
-                spans.push(Span::styled(" │".to_string(), sep_style));
+                spans.push(Span::styled(chrome.row_right.to_string(), sep_style));
             }
         }
         lines.push(Line::from(spans));
@@ -1038,7 +1101,7 @@ fn render_table_border(
     mid: &str,
     right: &str,
 ) -> Line<'static> {
-    let fill = "\u{2500}".repeat(col_width);
+    let fill = table_chrome().fill.to_string().repeat(col_width);
     let mut s = String::new();
     s.push_str(left);
     for i in 0..num_cols {
@@ -1053,7 +1116,7 @@ fn render_table_border(
 }
 
 fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<Line<'static>> {
-    let sep_style = Style::default().fg(palette::TEXT_DIM);
+    let sep_style = Style::default().fg(active_theme().text_dim_color);
 
     let num_cols = blocks
         .iter()
@@ -1065,6 +1128,7 @@ fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<
         .unwrap_or(1);
 
     let col_width = table_col_width(num_cols, width);
+    let chrome = table_chrome();
 
     let mut lines = Vec::new();
 
@@ -1073,9 +1137,9 @@ fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<
         num_cols,
         col_width,
         sep_style,
-        "\u{250C}\u{2500}",
-        "\u{2500}\u{252C}\u{2500}",
-        "\u{2500}\u{2510}",
+        chrome.top_left,
+        chrome.top_mid,
+        chrome.top_right,
     ));
 
     let mid_border = || {
@@ -1083,9 +1147,9 @@ fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<
             num_cols,
             col_width,
             sep_style,
-            "\u{251C}\u{2500}",
-            "\u{2500}\u{253C}\u{2500}",
-            "\u{2500}\u{2524}",
+            chrome.mid_left,
+            chrome.mid_mid,
+            chrome.mid_right,
         )
     };
 
@@ -1109,9 +1173,9 @@ fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<
         num_cols,
         col_width,
         sep_style,
-        "\u{2514}\u{2500}",
-        "\u{2500}\u{2534}\u{2500}",
-        "\u{2500}\u{2518}",
+        chrome.bottom_left,
+        chrome.bottom_mid,
+        chrome.bottom_right,
     ));
 
     lines
@@ -1119,7 +1183,7 @@ fn render_table_group(blocks: &[Block], width: usize, base_style: Style) -> Vec<
 
 fn link_style() -> Style {
     Style::default()
-        .fg(palette::DEEPSEEK_BLUE)
+        .fg(active_theme().user_accent_color)
         .add_modifier(Modifier::UNDERLINED)
 }
 
@@ -1241,6 +1305,7 @@ fn push_word_breaking_chars(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deepseek_theme::{Theme, with_active_theme};
     use ratatui::style::Style;
 
     fn visible_lines(lines: &[Line<'static>]) -> Vec<String> {
@@ -1302,6 +1367,42 @@ mod tests {
                 .collect::<String>()
         });
         assert_eq!(direct, two_step);
+    }
+
+    #[test]
+    fn render_markdown_uses_active_theme_for_chrome_links_and_code() {
+        let theme = Theme::deepseek_shell();
+        let source = "# Title\n\n[docs](https://example.com) and `code`\n";
+
+        let lines = with_active_theme(theme, || {
+            render_markdown(source, 80, Style::default().fg(theme.text_body_color))
+        });
+
+        let heading = lines
+            .iter()
+            .find(|line| visible_lines(std::slice::from_ref(line))[0].contains("Title"))
+            .expect("heading should render");
+        assert_eq!(
+            heading.spans[0].style.fg,
+            Some(theme.assistant_accent_color)
+        );
+        let body = lines
+            .iter()
+            .find(|line| visible_lines(std::slice::from_ref(line))[0].contains("docs"))
+            .expect("body line should render");
+        assert!(
+            body.spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme.user_accent_color)),
+            "link span should use active user accent"
+        );
+        assert!(
+            body.spans
+                .iter()
+                .any(|span| span.content.as_ref() == "code"
+                    && span.style.bg == Some(theme.section_bg)),
+            "inline code should use active section background"
+        );
     }
 
     #[test]
@@ -1599,39 +1700,50 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
+        let chrome = table_chrome();
+        let vertical = chrome.row_left.chars().next().expect("row separator");
         // Column pipes still present
-        assert!(text.contains('│'), "table pipe separator missing: {text:?}");
+        assert!(
+            text.contains(vertical),
+            "table pipe separator missing: {text:?}"
+        );
         // Separator row rendered as middle border, not raw markdown
         assert!(
             !text.contains("|---|"),
             "raw separator row leaked: {text:?}"
         );
-        // Top and bottom borders present
-        assert!(
-            text.contains('\u{250C}'),
-            "top-left corner missing: {text:?}"
-        );
-        assert!(
-            text.contains('\u{2510}'),
-            "top-right corner missing: {text:?}"
-        );
-        assert!(
-            text.contains('\u{2514}'),
-            "bottom-left corner missing: {text:?}"
-        );
-        assert!(
-            text.contains('\u{2518}'),
-            "bottom-right corner missing: {text:?}"
-        );
-        // Middle separator present (at the |---|---| position)
-        assert!(
-            text.contains('\u{251C}'),
-            "middle-left junction missing: {text:?}"
-        );
-        assert!(
-            text.contains('\u{2524}'),
-            "middle-right junction missing: {text:?}"
-        );
+        for expected in [
+            chrome.top_left,
+            chrome.top_mid,
+            chrome.top_right,
+            chrome.mid_left,
+            chrome.mid_mid,
+            chrome.mid_right,
+            chrome.bottom_left,
+            chrome.bottom_mid,
+            chrome.bottom_right,
+        ] {
+            assert!(
+                text.contains(expected),
+                "table border segment {expected:?} missing: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_table_chrome_has_ascii_fallback() {
+        let chrome = table_chrome();
+        if palette::ascii_ui_enabled() {
+            assert_eq!(markdown_rule_char(), '-');
+            assert_eq!(chrome.row_left, "| ");
+            assert_eq!(chrome.top_left, "+-");
+            assert_eq!(chrome.mid_mid, "-+-");
+        } else {
+            assert_eq!(markdown_rule_char(), '\u{2500}');
+            assert_eq!(chrome.row_left, "\u{2502} ");
+            assert_eq!(chrome.top_left, "\u{250C}\u{2500}");
+            assert_eq!(chrome.mid_mid, "\u{2500}\u{253C}\u{2500}");
+        }
     }
 
     #[test]
@@ -1669,8 +1781,9 @@ mod tests {
             .iter()
             .find(|line| line.contains("strings ~/.cargo/bin/codewhale-tui"))
             .expect("data row should render");
+        let vertical = table_chrome().row_left.chars().next().expect("row separator");
         assert_eq!(
-            data_line.matches('│').count(),
+            data_line.matches(vertical).count(),
             3,
             "two-column table row should have left, middle, and right separators: {data_line:?}"
         );
@@ -1728,8 +1841,12 @@ mod tests {
 
         // Every line in the rendered table — including wrapped continuation
         // lines — must show the pipe column separator. We identify table
-        // body lines as ones that start with the row separator `│`.
-        let body_lines: Vec<&String> = rendered.iter().filter(|s| s.starts_with('│')).collect();
+        // body lines as ones that start with the row separator.
+        let vertical = table_chrome().row_left.chars().next().expect("row separator");
+        let body_lines: Vec<&String> = rendered
+            .iter()
+            .filter(|s| s.starts_with(vertical))
+            .collect();
 
         assert!(
             body_lines.len() >= 3,
@@ -1740,7 +1857,7 @@ mod tests {
 
         for line in &body_lines {
             assert!(
-                line.matches('│').count() >= 3,
+                line.matches(vertical).count() >= 3,
                 "every wrapped table line should have N+1 column separators \
                  for N columns; got fewer in: {line:?}"
             );

@@ -699,16 +699,24 @@ instructions when using a specific skill.\n\n",
 }
 
 fn truncate_for_prompt(value: &str, max_chars: usize) -> String {
+    truncate_for_prompt_with_ascii(value, max_chars, crate::palette::ascii_ui_enabled())
+}
+
+fn truncate_for_prompt_with_ascii(value: &str, max_chars: usize, ascii: bool) -> String {
     let single_line = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if single_line.chars().count() <= max_chars {
         return single_line;
     }
 
+    let ellipsis = if ascii { "..." } else { "…" };
+    if max_chars <= ellipsis.chars().count() {
+        return ellipsis.chars().take(max_chars).collect();
+    }
     let mut truncated = single_line
         .chars()
-        .take(max_chars.saturating_sub(1))
+        .take(max_chars.saturating_sub(ellipsis.chars().count()))
         .collect::<String>();
-    truncated.push('…');
+    truncated.push_str(ellipsis);
     truncated
 }
 
@@ -860,6 +868,22 @@ mod tests {
         assert!(
             !rendered.contains(&"x".repeat(max + 1)),
             "untruncated long run should not appear"
+        );
+    }
+
+    #[test]
+    fn truncate_for_prompt_uses_ascii_ellipsis_when_enabled() {
+        assert_eq!(
+            super::truncate_for_prompt_with_ascii("alpha beta gamma", 10, true),
+            "alpha b..."
+        );
+        assert_eq!(
+            super::truncate_for_prompt_with_ascii("alpha beta gamma", 2, true),
+            ".."
+        );
+        assert_eq!(
+            super::truncate_for_prompt_with_ascii("alpha beta gamma", 10, false),
+            "alpha bet…"
         );
     }
 

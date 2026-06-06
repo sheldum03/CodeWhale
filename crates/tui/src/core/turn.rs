@@ -132,6 +132,14 @@ fn add_optional_usage(total: Option<u32>, delta: Option<u32>) -> Option<u32> {
 /// label. Longer prompts are truncated with an ellipsis.
 const USER_PROMPT_LABEL_MAX: usize = 100;
 
+fn snapshot_label_ellipsis() -> &'static str {
+    if crate::palette::ascii_ui_enabled() {
+        "..."
+    } else {
+        "\u{2026}"
+    }
+}
+
 /// Format a snapshot label that includes the user prompt for readability
 /// in `/restore` listings.
 ///
@@ -146,7 +154,7 @@ fn format_snapshot_label(prefix: &str, turn_seq: u64, user_prompt: Option<&str>)
             let first_line = prompt.lines().next().unwrap_or("");
             let truncated: String = first_line.chars().take(USER_PROMPT_LABEL_MAX).collect();
             if truncated.chars().count() < first_line.chars().count() {
-                format!("{base}: {truncated}…")
+                format!("{base}: {truncated}{}", snapshot_label_ellipsis())
             } else {
                 format!("{base}: {truncated}")
             }
@@ -251,5 +259,34 @@ impl TurnToolCall {
     pub fn set_error(&mut self, error: String, duration: Duration) {
         self.error = Some(error);
         self.duration = Some(duration);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{EnvVarGuard, lock_test_env};
+
+    #[test]
+    fn snapshot_label_truncation_uses_ascii_ellipsis_when_enabled() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::set("CODEWHALE_ASCII_UI", "1");
+        let prompt = "x".repeat(USER_PROMPT_LABEL_MAX + 1);
+
+        let label = format_snapshot_label("pre-turn", 7, Some(&prompt));
+
+        assert!(label.ends_with("..."), "{label}");
+        assert!(!label.contains('\u{2026}'), "{label}");
+    }
+
+    #[test]
+    fn snapshot_label_truncation_keeps_unicode_ellipsis_by_default() {
+        let _lock = lock_test_env();
+        let _ascii = EnvVarGuard::remove("CODEWHALE_ASCII_UI");
+        let prompt = "x".repeat(USER_PROMPT_LABEL_MAX + 1);
+
+        let label = format_snapshot_label("pre-turn", 7, Some(&prompt));
+
+        assert!(label.ends_with('\u{2026}'), "{label}");
     }
 }

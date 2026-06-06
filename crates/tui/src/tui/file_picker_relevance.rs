@@ -31,12 +31,14 @@ pub(super) fn open_file_picker(app: &mut App) {
     // Honor the configured `mention_walk_depth` (0 = unlimited) so the picker
     // and `@`-mention completion agree, and files in deeply nested trees stay
     // discoverable (#2488).
-    app.view_stack
-        .push(FilePickerView::new_with_relevance_and_depth(
+    app.view_stack.push(
+        FilePickerView::new_with_relevance_and_depth(
             &app.workspace,
             relevance,
             app.mention_walk_depth,
-        ));
+        )
+        .with_ui_theme(app.ui_theme),
+    );
 }
 
 pub(super) fn build_relevance(app: &App) -> FilePickerRelevance {
