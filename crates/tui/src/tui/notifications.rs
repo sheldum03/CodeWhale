@@ -466,8 +466,8 @@ fn bell_sound() {
 /// - **Body**: Remaining lines of `msg`, or the full `msg` if single-line
 /// - **Sound**: Default macOS notification sound
 ///
-/// The message body is capped at 200 **characters** (not bytes) to keep the
-/// bubble readable while correctly handling multi-byte text.
+/// The message body is capped at 200 terminal columns to keep the bubble
+/// readable while correctly handling wide multi-byte text.
 ///
 /// **Security**: The message is passed to `osascript` as a command-line
 /// argument via `ARGV`, never embedded inline in the AppleScript source.
@@ -491,9 +491,7 @@ fn macos_display_notification(msg: &str) {
     let _ = std::thread::Builder::new()
         .name("osascript-notif".into())
         .spawn(move || {
-            // Char-bounded truncation (not byte-bounded) so we don't slice
-            // through a multi-byte sequence and emit invalid UTF-8.
-            let body_str: String = body.chars().take(200).collect();
+            let body_str = macos_notification_body(&body);
 
             // Build AppleScript that receives the message via ARGV
             // instead of inline string interpolation. AppleScript does
@@ -553,6 +551,11 @@ fn macos_display_notification(msg: &str) {
                 _ => {}
             }
         });
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_notification_body(msg: &str) -> String {
+    truncate_display_width_with_ellipsis(msg, 200)
 }
 
 /// Return a human-readable duration string, capped at two units so
@@ -905,6 +908,15 @@ mod tests {
             let summary = truncate_display_width_with_ellipsis("通知摘要", width);
             assert_eq!(UnicodeWidthStr::width(summary.as_str()), width);
         }
+    }
+
+    #[test]
+    fn macos_notification_body_truncates_by_display_width() {
+        let body = macos_notification_body(&"界".repeat(120));
+
+        assert!(UnicodeWidthStr::width(body.as_str()) <= 200);
+        assert!(body.ends_with("..."));
+        assert!(body.chars().count() < 200);
     }
 
     #[test]
