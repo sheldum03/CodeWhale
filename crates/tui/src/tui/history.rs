@@ -2019,10 +2019,10 @@ fn render_checklist_card(
 fn summarize_string_value(text: &str, max_len: usize, count_only: bool) -> String {
     let trimmed = text.trim();
     let len = trimmed.chars().count();
-    if count_only || len > max_len {
+    if count_only || UnicodeWidthStr::width(trimmed) > max_len {
         return format!("<{len} chars>");
     }
-    truncate_text(trimmed, max_len)
+    truncate_text_to_width(trimmed, max_len)
 }
 
 fn summarize_inline_value(value: &Value, max_len: usize, count_only: bool) -> String {
@@ -5033,6 +5033,19 @@ mod tests {
         assert!(
             truncated.contains(history_ellipsis()),
             "truncated text should expose an ellipsis: {truncated:?}"
+        );
+    }
+
+    #[test]
+    fn summarize_tool_args_counts_wide_strings_by_display_width() {
+        let wide_path = "\u{8def}\u{5f84}".repeat(41);
+        let summary = super::summarize_tool_args(&serde_json::json!({ "path": wide_path }))
+            .expect("summary");
+
+        assert_eq!(
+            summary,
+            "path: <82 chars>",
+            "wide path should be summarized before it can overflow a tool header"
         );
     }
 
