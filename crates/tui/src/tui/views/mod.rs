@@ -2222,38 +2222,10 @@ fn append_subagent_group(
     )));
 
     for agent in agents {
-        let id = truncate_view_text(&agent.agent_id, 11);
-        let display_name = agent
-            .nickname
-            .as_deref()
-            .map(|nick| format!("{nick:<12}"))
-            .unwrap_or_else(|| format!("{id:<12}"));
-        let kind = format_agent_type(&agent.agent_type);
         let (status, status_style, status_detail) =
             format_agent_status(&agent.status, ui_theme);
 
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(display_name, Style::default().fg(ui_theme.text_body)),
-            Span::raw(" "),
-            Span::styled(format!("{id:<11}"), Style::default().fg(ui_theme.text_dim)),
-            Span::styled(
-                format!("{kind:<9}"),
-                Style::default().fg(ui_theme.text_muted),
-            ),
-            Span::raw("  "),
-            Span::styled(format!("{status:<10}"), status_style),
-            Span::raw("  "),
-            Span::styled(
-                format!("{:>4}{}", agent.steps_taken, subagent_steps_suffix()),
-                Style::default().fg(ui_theme.text_dim),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("{:>6}ms", agent.duration_ms),
-                Style::default().fg(ui_theme.text_dim),
-            ),
-        ]));
+        lines.push(render_subagent_row(agent, status, status_style, ui_theme));
 
         if let Some(detail) = status_detail {
             let max_len = content_width.saturating_sub(10);
@@ -2291,6 +2263,48 @@ fn append_subagent_group(
     }
 
     lines.push(Line::from(""));
+}
+
+fn render_subagent_row(
+    agent: &SubAgentResult,
+    status: &str,
+    status_style: ratatui::style::Style,
+    ui_theme: UiTheme,
+) -> ratatui::text::Line<'static> {
+    use ratatui::{
+        style::Style,
+        text::{Line, Span},
+    };
+
+    let id = truncate_view_text(&agent.agent_id, 11);
+    let display_name = agent.nickname.as_deref().unwrap_or(&id);
+    let kind = format_agent_type(&agent.agent_type);
+
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            pad_view_text(display_name, 12),
+            Style::default().fg(ui_theme.text_body),
+        ),
+        Span::raw(" "),
+        Span::styled(pad_view_text(&id, 11), Style::default().fg(ui_theme.text_dim)),
+        Span::styled(
+            pad_view_text(kind, 9),
+            Style::default().fg(ui_theme.text_muted),
+        ),
+        Span::raw("  "),
+        Span::styled(pad_view_text(status, 10), status_style),
+        Span::raw("  "),
+        Span::styled(
+            format!("{:>4}{}", agent.steps_taken, subagent_steps_suffix()),
+            Style::default().fg(ui_theme.text_dim),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("{:>6}ms", agent.duration_ms),
+            Style::default().fg(ui_theme.text_dim),
+        ),
+    ])
 }
 
 fn agent_type_order(agent_type: &SubAgentType) -> u8 {
@@ -2383,8 +2397,8 @@ mod tests {
     use super::{
         ConfigListItem, ConfigSection, ConfigView, ModalKind, ModalView, ShellControlView,
         ViewAction, ViewEvent, ViewStack, config_editor_move_hint, modal_summary_separator,
-        pad_view_text, render_ascii_views_modal_chrome, scroll_nav_hint, subagent_steps_suffix,
-        subagent_view_agents, truncate_view_text,
+        pad_view_text, render_ascii_views_modal_chrome, render_subagent_row, scroll_nav_hint,
+        subagent_steps_suffix, subagent_view_agents, truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
@@ -2400,7 +2414,7 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use ratatui::{buffer::Buffer, layout::Rect};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Style};
     use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
@@ -2648,6 +2662,34 @@ mod tests {
         assert!(
             buf.content().iter().any(|cell| cell.bg == theme.surface_bg),
             "sub-agents surface should use injected background color"
+        );
+    }
+
+    #[test]
+    fn subagent_row_pads_columns_by_display_width() {
+        let mut agent = manager_agent(
+            "agent_\u{5bbd}\u{5b57}\u{7b26}_identifier",
+            SubAgentStatus::Running,
+        );
+        agent.nickname =
+            Some("\u{6267}\u{884c}\u{5668}\u{89d2}\u{8272}\u{5f88}\u{957f}".to_string());
+
+        let line = render_subagent_row(
+            &agent,
+            "running",
+            Style::default(),
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(
+            UnicodeWidthStr::width(plain.as_str()),
+            64,
+            "sub-agent row should keep fixed visual columns: {plain:?}"
         );
     }
 
