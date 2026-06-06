@@ -85,6 +85,18 @@ When `[memory] enabled = true`, typing `# foo` and pressing `Enter` appends `foo
 | `Enter` / `Tab`      | Run / complete the highlighted command             |
 | `Esc`                | Dismiss palette                                     |
 
+### Theme and display commands
+
+These are slash commands rather than dedicated key chords, but they are part of
+the visual navigation surface:
+
+| Command                   | Action                                            |
+|---------------------------|---------------------------------------------------|
+| `/theme`                  | Open the theme picker with live preview           |
+| `/theme deepseek-shell`   | Enable the opt-in DeepSeek Shell CLI theme        |
+| `/theme system`           | Return to the terminal-aware default theme        |
+| `CODEWHALE_ASCII_UI=1`    | Start with plain ASCII UI symbols for terminals or fonts with poor Unicode coverage |
+
 ## Session Picker (`Ctrl-R` or `/sessions`)
 
 | Chord                | Action                                              |
