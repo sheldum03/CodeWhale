@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use uuid::Uuid;
 
 use crate::client::DeepSeekClient;
@@ -4831,11 +4832,25 @@ fn subagent_router_prompt(runtime: &SubAgentRuntime, prompt: &str) -> String {
 }
 
 fn truncate_subagent_router_prompt(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
+    if UnicodeWidthStr::width(text) <= max_chars {
         return text.to_string();
     }
-    let mut out = text.chars().take(max_chars).collect::<String>();
+    let mut out = take_display_width(text, max_chars);
     out.push_str("\n[truncated]");
+    out
+}
+
+fn take_display_width(text: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
     out
 }
 

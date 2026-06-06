@@ -35,6 +35,19 @@ fn estimate_tool_description_tokens_conservative(text: &str) -> usize {
 }
 
 #[test]
+fn truncate_subagent_router_prompt_respects_cjk_display_width() {
+    let truncated = truncate_subagent_router_prompt(&"子代理任务".repeat(40), 31);
+    let prefix = truncated
+        .split_once("\n[truncated]")
+        .map(|(prefix, _)| prefix)
+        .expect("truncation marker");
+
+    assert!(unicode_width::UnicodeWidthStr::width(prefix) <= 31);
+    assert!(prefix.chars().count() < 31);
+    assert!(truncated.ends_with("[truncated]"));
+}
+
+#[test]
 fn test_agent_type_from_str() {
     assert_eq!(
         SubAgentType::from_str("general"),
