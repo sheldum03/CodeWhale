@@ -1539,6 +1539,30 @@ fn config_modal_footer_line(footer: &str, max_width: usize, ui_theme: UiTheme) -
     ))
 }
 
+fn subagent_modal_footer_line(
+    scroll_indicator: String,
+    max_width: usize,
+    ui_theme: UiTheme,
+) -> Line<'static> {
+    Line::from(truncate_spans_to_width(
+        vec![
+            Span::styled(
+                " Esc to close ",
+                Style::default().fg(ui_theme.text_muted),
+            ),
+            Span::styled(
+                " R to refresh ",
+                Style::default().fg(ui_theme.text_muted),
+            ),
+            Span::styled(
+                scroll_indicator,
+                Style::default().fg(ui_theme.accent_secondary),
+            ),
+        ],
+        max_width,
+    ))
+}
+
 impl ModalView for ConfigView {
     fn kind(&self) -> ModalKind {
         ModalKind::Config
@@ -2243,20 +2267,11 @@ impl ModalView for SubAgentsView {
                             " Sub-agents ",
                             Style::default().fg(self.ui_theme.accent_primary).bold(),
                         )]))
-                        .title_bottom(Line::from(vec![
-                            Span::styled(
-                                " Esc to close ",
-                                Style::default().fg(self.ui_theme.text_muted),
-                            ),
-                            Span::styled(
-                                " R to refresh ",
-                                Style::default().fg(self.ui_theme.text_muted),
-                            ),
-                            Span::styled(
-                                scroll_indicator,
-                                Style::default().fg(self.ui_theme.accent_secondary),
-                            ),
-                        ]))
+                        .title_bottom(subagent_modal_footer_line(
+                            scroll_indicator,
+                            popup_area.width.saturating_sub(4) as usize,
+                            self.ui_theme,
+                        ))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(self.ui_theme.border))
                         .style(Style::default().bg(self.ui_theme.surface_bg))
@@ -2505,7 +2520,8 @@ mod tests {
         ViewAction, ViewEvent, ViewStack, config_editor_move_hint, config_modal_footer_line,
         modal_summary_separator, pad_view_text, render_ascii_views_modal_chrome,
         render_config_search_line, render_shell_control_option_line, render_subagent_row,
-        scroll_nav_hint, subagent_steps_suffix, subagent_view_agents, truncate_view_text,
+        scroll_nav_hint, subagent_modal_footer_line, subagent_steps_suffix, subagent_view_agents,
+        truncate_view_text,
     };
     use crate::config::Config;
     use crate::localization::Locale;
@@ -2854,6 +2870,26 @@ mod tests {
         assert!(
             plain.is_char_boundary(plain.len()),
             "sub-agent row must not split UTF-8 codepoints: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn subagent_modal_footer_truncates_to_display_width() {
+        let line = subagent_modal_footer_line(
+            " [123/456 \u{4e0a}\u{4e0b}\u{6eda}\u{52a8}\u{6307}\u{793a}] ".to_string(),
+            24,
+            palette::DEEPSEEK_SHELL_UI_THEME,
+        );
+        let plain = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(UnicodeWidthStr::width(plain.as_str()) <= 24);
+        assert!(
+            plain.is_char_boundary(plain.len()),
+            "sub-agent footer must not split UTF-8 codepoints: {plain:?}"
         );
     }
 
