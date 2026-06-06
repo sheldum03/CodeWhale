@@ -1262,11 +1262,11 @@ impl Renderable for ApprovalWidget<'_> {
 
             let risk = self.request.risk;
             let palette_colors = approval_palette(risk, &self.ui_theme);
-            let summary = format!(
-                " {} {} {}  [Tab to expand] ",
+            let summary = approval_collapsed_summary(
                 self.request.tool_name,
-                widget_title_separator(),
-                risk_badge_text(risk, self.view.locale()),
+                risk,
+                self.view.locale(),
+                usize::from(bar_area.width),
             );
             let line = Line::from(Span::styled(
                 summary,
@@ -1608,6 +1608,23 @@ fn approval_card_title(
         tool_name
     );
     truncate_display_width(&title, max_width)
+}
+
+fn approval_collapsed_summary(
+    tool_name: &str,
+    risk: RiskLevel,
+    locale: Locale,
+    max_width: usize,
+) -> String {
+    truncate_display_width(
+        &format!(
+            " {} {} {}  [Tab to expand] ",
+            tool_name,
+            widget_title_separator(),
+            risk_badge_text(risk, locale),
+        ),
+        max_width,
+    )
 }
 
 fn approval_labeled_line(
@@ -3739,6 +3756,22 @@ mod tests {
         assert!(
             title.is_char_boundary(title.len()),
             "approval title must not split UTF-8 codepoints: {title:?}"
+        );
+    }
+
+    #[test]
+    fn approval_collapsed_summary_truncates_to_display_width() {
+        let summary = approval_collapsed_summary(
+            &"\u{5de5}\u{5177}\u{540d}\u{79f0}".repeat(12),
+            RiskLevel::High,
+            Locale::En,
+            32,
+        );
+
+        assert!(UnicodeWidthStr::width(summary.as_str()) <= 32);
+        assert!(
+            summary.is_char_boundary(summary.len()),
+            "approval collapsed summary must not split UTF-8 codepoints: {summary:?}"
         );
     }
 
