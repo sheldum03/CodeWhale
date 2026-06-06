@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const MAX_ITEMS: usize = 8;
 const MAX_SUMMARY_CHARS: usize = 1_200;
@@ -340,19 +341,29 @@ fn push_unique_limited(target: &mut Vec<String>, value: String) {
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if let Some((idx, _)) = text.char_indices().nth(max_chars) {
-        if max_chars < 3 {
-            return text[..idx].to_string();
-        }
-        let truncate_at = text
-            .char_indices()
-            .nth(max_chars - 3)
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
-        format!("{}...", &text[..truncate_at])
-    } else {
-        text.to_string()
+    if UnicodeWidthStr::width(text) <= max_chars {
+        return text.to_string();
     }
+
+    if max_chars < 3 {
+        return take_display_width(text, max_chars);
+    }
+
+    format!("{}...", take_display_width(text, max_chars - 3))
+}
+
+fn take_display_width(text: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -459,6 +470,15 @@ error: could not compile `demo` (lib) due to 1 previous error
         assert_eq!(truncate_chars("abcdef", 2), "ab");
         assert_eq!(truncate_chars("abcdef", 3), "...");
         assert_eq!(truncate_chars("abcdef", 4), "a...");
+    }
+
+    #[test]
+    fn truncate_chars_respects_cjk_display_width() {
+        let summary = truncate_chars(&"编译错误".repeat(20), 17);
+
+        assert!(UnicodeWidthStr::width(summary.as_str()) <= 17);
+        assert!(summary.ends_with("..."));
+        assert!(summary.chars().count() < 17);
     }
 
     #[test]
