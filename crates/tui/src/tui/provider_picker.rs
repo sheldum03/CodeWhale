@@ -258,14 +258,19 @@ impl ProviderPickerView {
                 Style::default().fg(self.ui_theme.warning)
             };
             let hint = Self::provider_hint(*provider, *has_key);
+            let row = provider_row_text(
+                arrow,
+                provider.display_name(),
+                active_dot,
+                &hint,
+                usize::from(inner.width),
+            );
             let mut line = Line::from(vec![
-                Span::styled(" ", spacer_style),
-                Span::styled(arrow, label_style),
-                Span::styled(" ", spacer_style),
-                Span::styled(provider.display_name().to_string(), label_style),
-                Span::styled(active_dot, label_style),
-                Span::styled("  ", spacer_style),
-                Span::styled(hint, hint_style),
+                Span::styled(row.prefix, spacer_style),
+                Span::styled(row.name, label_style),
+                Span::styled(row.active_marker, label_style),
+                Span::styled(row.gap, spacer_style),
+                Span::styled(row.hint, hint_style),
             ]);
             if is_selected {
                 line.style = self.selected_row_bg_style();
@@ -408,6 +413,86 @@ fn fit_key_display(text: &str, max_width: usize) -> String {
         width += ch_width;
     }
     format!("...{suffix}")
+}
+
+struct ProviderRowText {
+    prefix: String,
+    name: String,
+    active_marker: String,
+    gap: String,
+    hint: String,
+}
+
+fn provider_row_text(
+    arrow: &str,
+    provider_name: &str,
+    active_marker: &str,
+    hint: &str,
+    max_width: usize,
+) -> ProviderRowText {
+    let prefix = format!(" {arrow} ");
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str());
+    let content_width = max_width.saturating_sub(prefix_width);
+    let name_width = UnicodeWidthStr::width(provider_name);
+
+    if content_width <= name_width {
+        return ProviderRowText {
+            prefix,
+            name: fit_row_text(provider_name, content_width),
+            active_marker: String::new(),
+            gap: String::new(),
+            hint: String::new(),
+        };
+    }
+
+    let mut remaining = content_width.saturating_sub(name_width);
+    let active_marker_width = UnicodeWidthStr::width(active_marker);
+    let active_marker = if active_marker_width <= remaining {
+        remaining = remaining.saturating_sub(active_marker_width);
+        active_marker.to_string()
+    } else {
+        String::new()
+    };
+    let gap = if !hint.is_empty() && remaining >= 2 {
+        remaining = remaining.saturating_sub(2);
+        "  ".to_string()
+    } else {
+        String::new()
+    };
+
+    ProviderRowText {
+        prefix,
+        name: provider_name.to_string(),
+        active_marker,
+        gap,
+        hint: fit_row_text(hint, remaining),
+    }
+}
+
+fn fit_row_text(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut out = String::new();
+    let mut width = 0usize;
+    let value_width = max_width.saturating_sub(3);
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > value_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push_str("...");
+    out
 }
 
 fn render_ascii_provider_picker_chrome(
@@ -948,6 +1033,45 @@ mod tests {
             let display = fit_key_display("********abcd", width);
             assert_eq!(UnicodeWidthStr::width(display.as_str()), width);
         }
+    }
+
+    #[test]
+    fn provider_row_text_fits_available_width() {
+        let row = provider_row_text(
+            ">",
+            "A very long provider display name",
+            " *",
+            "needs API key",
+            18,
+        );
+        let rendered = format!(
+            "{}{}{}{}{}",
+            row.prefix, row.name, row.active_marker, row.gap, row.hint
+        );
+
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 18);
+        assert!(rendered.contains("..."));
+    }
+
+    #[test]
+    fn provider_row_text_handles_cjk_display_width() {
+        let row = provider_row_text(
+            ">",
+            "服务商服务商服务商",
+            " *",
+            "需要 API key",
+            16,
+        );
+        let rendered = format!(
+            "{}{}{}{}{}",
+            row.prefix, row.name, row.active_marker, row.gap, row.hint
+        );
+
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 16);
+        assert!(
+            rendered.is_char_boundary(rendered.len()),
+            "row must not split UTF-8 codepoints: {rendered:?}"
+        );
     }
 
     #[test]
